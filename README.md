@@ -22,7 +22,8 @@ wait for another dev to test your patch
 if no one objects after at least 1 day (for the smallest patches), you can ask someone to commit it to the "default" branch.
 If you're willing to code on a regular basis, and if actual devs are okay after reviewing your patches, we can grant you commit rights if you require them.
 
-# Important
+__Important__
+
 While small patches do not take much time to code, bigger features or code refactoring may take much longer and affect more source files. In the past, we used to create separate branches to code them, with regular intermediate merges from "default" to the new branch to keep them in synch. This is still possible, but regardless of whether you do that in a separate branch or through a posted patch, you/we still have to undertake the task of decomposing large changes into smaller & committable patches. This is necessary to avoid being out of synch at some point. Then you'll be able to commit/merge those intermediary patches from the new branch into "default", but still leave RawTherapee in a buildable and usable state.
 
 # Source Code Documentation
@@ -46,4 +47,5 @@ add soft-proofing
 maybe able to run on tablets ("would be nice" ;) )... can only be done after the code rewrite
 maybe enhance and separate the DAM features from the (batch) development feature
 maybe integrate peripheral features to be a full LR-like software (i.e. Printing, Uploading, etc..), but with a really low priority
-# Any help from you will be much appreciated.
+
+__Any help from you will be much appreciated.__
