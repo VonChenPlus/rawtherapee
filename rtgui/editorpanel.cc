@@ -440,6 +440,7 @@ void EditorPanel::on_realize () {
     Gtk::VBox::on_realize ();
     // This line is needed to avoid autoexpansion of the window :-/
     vboxright->set_size_request (options.toolPanelWidth, -1);
+    tpc->updateToolState();
 }
 
 void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc) {
@@ -1043,6 +1044,9 @@ bool EditorPanel::handleShortcutKey (GdkEventKey* event) {
 				history->addBookmarkPressed ();
 				setProgressStr(M("PROGRESSBAR_SNAPSHOT_ADDED"));
 				return true;
+			case GDK_f:
+                iareapanel->imageArea->zoomPanel->zoomFitCropClicked();
+				return true;
 		}
     }
     
@@ -1270,7 +1274,7 @@ void EditorPanel::sendToGimpPressed () {
     rtengine::ProcessingJob* job = rtengine::ProcessingJob::create (ipc->getInitialImage(), pparams);
     ProgressConnector<rtengine::IImage16*> *ld = new ProgressConnector<rtengine::IImage16*>();
     ld->startFunc(sigc::bind(sigc::ptr_fun(&rtengine::processImage), job, err, parent->getProgressListener(), options.tunnelMetaData, false ),
-    		      sigc::bind(sigc::mem_fun( *this,&EditorPanel::idle_sendToGimp ),ld ));
+    		      sigc::bind(sigc::mem_fun( *this,&EditorPanel::idle_sendToGimp ),ld, openThm->getFileName() ));
     saveimgas->set_sensitive(false);
     sendtogimp->set_sensitive(false);
 }
@@ -1291,13 +1295,13 @@ void EditorPanel::syncFileBrowser() { // synchronize filebrowser with image in E
 		fPanel->fileCatalog->selectImage(fname, true);
 }
 
-bool EditorPanel::idle_sendToGimp( ProgressConnector<rtengine::IImage16*> *pc){
+bool EditorPanel::idle_sendToGimp( ProgressConnector<rtengine::IImage16*> *pc, Glib::ustring fname){
 
 	rtengine::IImage16* img = pc->returnValue();
 	delete pc;
     if (img) {
         // get file name base
-        Glib::ustring shortname = removeExtension (Glib::path_get_basename (openThm->getFileName()));
+        Glib::ustring shortname = removeExtension (Glib::path_get_basename (fname));
         Glib::ustring dirname = Glib::get_tmp_dir ();
         Glib::ustring fname = Glib::build_filename (dirname, shortname);
 

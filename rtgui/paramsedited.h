@@ -476,7 +476,7 @@ class WaveletParamsEdited {
 
     public:
         bool enabled;
-        bool display;
+        bool strength;
         bool median;
         bool avoid;
 		bool c[9];
@@ -486,7 +486,6 @@ class WaveletParamsEdited {
 		bool CLmethod;
 		bool Tilesmethod;
 		bool Dirmethod;
-		bool tiles;
 		bool rescon;
 		bool resconH;
 		bool reschro;
@@ -497,7 +496,10 @@ class WaveletParamsEdited {
 		bool threshold2;
 		bool chroma;
 		bool chro;
-		bool unif;
+		bool contrast;
+		bool edgrad;
+		bool edgval;
+		bool edgthresh;
 		bool thr;
 		bool thrH;
         bool skinprotect;

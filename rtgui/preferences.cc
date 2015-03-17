@@ -302,19 +302,22 @@ Gtk::Widget* Preferences::getBatchProcPanel () {
     mi = behModel->append ();
     mi->set_value (behavColumns.label, M("TP_WAVELET_LABEL"));
     appendBehavList (mi, M("TP_WAVELET_THRES"), ADDSET_WA_THRES, true);
-    appendBehavList (mi, M("TP_WAVELET_CONTRAST"), ADDSET_WA, true);
- //   appendBehavList (mi, M("TP_WAVELET_UNIF"), ADDSET_WA_UNIF, true);
+  //  appendBehavList (mi, M("TP_WAVELET_CONTRAST"), ADDSET_WA, true);
     appendBehavList (mi, M("TP_WAVELET_THRESHOLD"), ADDSET_WA_THRESHOLD, true);
     appendBehavList (mi, M("TP_WAVELET_THRESHOLD2"), ADDSET_WA_THRESHOLD2, true);
     appendBehavList (mi, M("TP_WAVELET_CHRO"), ADDSET_WA_CHRO, true);
     appendBehavList (mi, M("TP_WAVELET_CHR"), ADDSET_WA_CHROMA, true);
-    appendBehavList (mi, M("TP_WAVELET_SKIN"), ADDSET_WA_SKINPROTECT, true);	
+    appendBehavList (mi, M("TP_WAVELET_SKIN"), ADDSET_WA_SKINPROTECT, true);
+    appendBehavList (mi, M("TP_WAVELET_EDRAD"), ADDSET_WA_EDGRAD, true);
+    appendBehavList (mi, M("TP_WAVELET_EDVAL"), ADDSET_WA_EDGVAL, true);
     appendBehavList (mi, M("TP_WAVELET_RESCON"), ADDSET_WA_RESCON, true);
     appendBehavList (mi, M("TP_WAVELET_THR"), ADDSET_WA_THRR, true);
     appendBehavList (mi, M("TP_WAVELET_RESCONH"), ADDSET_WA_RESCONH, true);
     appendBehavList (mi, M("TP_WAVELET_THRH"), ADDSET_WA_THRRH, true);
     appendBehavList (mi, M("TP_WAVELET_RESCHRO"), ADDSET_WA_RESCHRO, true);
     appendBehavList (mi, M("TP_WAVELET_SKY"), ADDSET_WA_SKYPROTECT, true);
+    appendBehavList (mi, M("TP_WAVELET_CONTRA"), ADDSET_WA_CONTRAST, true);
+    appendBehavList (mi, M("TP_WAVELET_STRENGTH"), ADDSET_WA_STRENGTH, true);
 	
     mi = behModel->append ();
     mi->set_value (behavColumns.label, M("TP_PREPROCESS_LABEL"));
@@ -513,14 +516,61 @@ Gtk::Widget* Preferences::getPerformancePanel () {
     Gtk::VBox* mainContainer = Gtk::manage( new Gtk::VBox () );
     mainContainer->set_border_width (4);
     mainContainer->set_spacing(4);
+
+    Gtk::Frame* fprevdemo = Gtk::manage (new Gtk::Frame (M("PREFERENCES_PREVDEMO")));
+    Gtk::HBox* hbprevdemo = Gtk::manage (new Gtk::HBox (false, 4));
+    Gtk::Label* lprevdemo = Gtk::manage (new Gtk::Label (M("PREFERENCES_PREVDEMO_LABEL")));
+    cprevdemo = Gtk::manage (new Gtk::ComboBoxText ());
+    cprevdemo->append_text (M("PREFERENCES_PREVDEMO_FAST"));
+    cprevdemo->append_text (M("PREFERENCES_PREVDEMO_SIDECAR"));
+    cprevdemo->set_active (1);
+    hbprevdemo->pack_start (*lprevdemo, Gtk::PACK_SHRINK);
+    hbprevdemo->pack_start (*cprevdemo);
+    fprevdemo->add (*hbprevdemo);
+    hbprevdemo->set_border_width(4);
+    mainContainer->pack_start (*fprevdemo, Gtk::PACK_SHRINK, 4);
+
+    Gtk::Frame* fclut = Gtk::manage( new Gtk::Frame (M("PREFERENCES_CLUTSCACHE")) );
+    Gtk::HBox* clutCacheSizeHB = Gtk::manage( new Gtk::HBox () );
+    clutCacheSizeHB->set_border_width(4);
+    clutCacheSizeHB->set_spacing(4);
+    Gtk::Label* CLUTLl = Gtk::manage( new Gtk::Label (M("PREFERENCES_CLUTSCACHE_LABEL") + ":", Gtk::ALIGN_LEFT));
+    clutCacheSizeSB = Gtk::manage( new Gtk::SpinButton () );
+    clutCacheSizeSB->set_digits (0);
+    clutCacheSizeSB->set_increments (1, 5);
+    clutCacheSizeSB->set_max_length(2);  // Will this be sufficient? :)
+#ifdef _OPENMP
+    clutCacheSizeSB->set_range (1, 2*omp_get_num_procs());
+#else
+    clutCacheSizeSB->set_range (1, 8);
+#endif
+    clutCacheSizeHB->pack_start (*CLUTLl, Gtk::PACK_SHRINK, 0);
+    clutCacheSizeHB->pack_end (*clutCacheSizeSB, Gtk::PACK_SHRINK, 0);
+    fclut->add (*clutCacheSizeHB);
+    mainContainer->pack_start (*fclut, Gtk::PACK_SHRINK, 4);
+
+    Gtk::Frame* finspect = Gtk::manage(  new Gtk::Frame (M("PREFERENCES_INSPECT_LABEL")) );
+    Gtk::HBox* maxIBuffersHB = Gtk::manage( new Gtk::HBox () );
+    maxIBuffersHB->set_border_width(4);
+    maxIBuffersHB->set_spacing(4);
+    maxIBuffersHB->set_tooltip_text(M("PREFERENCES_INSPECT_MAXBUFFERS_TOOLTIP"));
+    Gtk::Label* maxIBufferLbl = Gtk::manage( new Gtk::Label (M("PREFERENCES_INSPECT_MAXBUFFERS_LABEL") + ":", Gtk::ALIGN_LEFT));
+    maxInspectorBuffersSB = Gtk::manage( new Gtk::SpinButton () );
+    maxInspectorBuffersSB->set_digits (0);
+    maxInspectorBuffersSB->set_increments (1, 5);
+    maxInspectorBuffersSB->set_max_length(2);
+    maxInspectorBuffersSB->set_range (1, 12);  // ... we have to set a limit, 12 seem to be enough even for systems with tons of RAM
+    maxIBuffersHB->pack_start (*maxIBufferLbl, Gtk::PACK_SHRINK, 0);
+    maxIBuffersHB->pack_end (*maxInspectorBuffersSB, Gtk::PACK_SHRINK, 0);
+    finspect->add(*maxIBuffersHB);
+    mainContainer->pack_start(*finspect, Gtk::PACK_SHRINK, 4);
+
     Gtk::Frame* fdenoise = Gtk::manage( new Gtk::Frame (M("PREFERENCES_NOISE")) );
-    Gtk::VBox* vbdenoise = Gtk::manage( new Gtk::VBox () );
+    Gtk::VBox* vbdenoise = Gtk::manage( new Gtk::VBox (Gtk::PACK_SHRINK, 4) );
     vbdenoise->set_border_width (4);
 
     Gtk::Label* lreloadneeded2 = Gtk::manage (new Gtk::Label (M("PREFERENCES_IMG_RELOAD_NEEDED"), Gtk::ALIGN_LEFT));
-    Gtk::HBox* threadLimitHB = Gtk::manage( new Gtk::HBox () );
-    threadLimitHB->set_border_width(4);
-    threadLimitHB->set_spacing(4);
+    Gtk::HBox* threadLimitHB = Gtk::manage (new Gtk::HBox (Gtk::PACK_SHRINK, 4));
     threadLimitHB->set_tooltip_text(M("PREFERENCES_RGBDTL_TOOLTIP"));
     Gtk::Label* RGBDTLl = Gtk::manage( new Gtk::Label (M("PREFERENCES_RGBDTL_LABEL") + ":", Gtk::ALIGN_LEFT));
     rgbDenoiseTreadLimitSB = Gtk::manage( new Gtk::SpinButton () );
@@ -532,8 +582,8 @@ Gtk::Widget* Preferences::getPerformancePanel () {
     maxThreadNumber = omp_get_max_threads();
 #endif
     rgbDenoiseTreadLimitSB->set_range (0, maxThreadNumber);
-    threadLimitHB->pack_start (*RGBDTLl, Gtk::PACK_SHRINK, 0);
-    threadLimitHB->pack_end (*rgbDenoiseTreadLimitSB, Gtk::PACK_SHRINK, 0);
+    threadLimitHB->pack_start (*RGBDTLl, Gtk::PACK_SHRINK, 2);
+    threadLimitHB->pack_end (*rgbDenoiseTreadLimitSB, Gtk::PACK_SHRINK, 2);
 
     Gtk::Label* dnlab = Gtk::manage (new Gtk::Label (M("PREFERENCES_LEVDN")+":", Gtk::ALIGN_LEFT));
     Gtk::Label* dnautlab = Gtk::manage (new Gtk::Label (M("PREFERENCES_LEVAUTDN")+":", Gtk::ALIGN_LEFT));
@@ -584,64 +634,16 @@ Gtk::Widget* Preferences::getPerformancePanel () {
     colon->attach (*dnwavlab, 0, 1, 5, 6, Gtk::FILL, Gtk::SHRINK, 2, 2);
     colon->attach (*dnwavlev, 1, 2, 5, 6, Gtk::EXPAND | Gtk::FILL | Gtk::SHRINK, Gtk::SHRINK, 2, 2);
 
-    vbdenoise->pack_start (*lreloadneeded2, Gtk::PACK_SHRINK, 4);
-    vbdenoise->pack_start (*colon, Gtk::PACK_SHRINK, 4);
-    vbdenoise->pack_start(*threadLimitHB, Gtk::PACK_SHRINK, 4);
+    vbdenoise->pack_start (*lreloadneeded2, Gtk::PACK_SHRINK);
+    vbdenoise->pack_start (*colon, Gtk::PACK_SHRINK);
+    vbdenoise->pack_start(*threadLimitHB, Gtk::PACK_SHRINK);
+    // <--- To be hard-coded and removed once tested
+    cbdaubech = Gtk::manage (new Gtk::CheckButton (M("PREFERENCES_DAUB_LABEL"), Gtk::ALIGN_LEFT));
+    cbdaubech->set_tooltip_markup (M("PREFERENCES_DAUB_TOOLTIP"));
+    vbdenoise->pack_start (*cbdaubech, Gtk::PACK_SHRINK);
+    // --->
     fdenoise->add (*vbdenoise);
     mainContainer->pack_start (*fdenoise, Gtk::PACK_SHRINK, 4);
-
- /*   Gtk::Label* dntilab = Gtk::manage (new Gtk::Label (M("PREFERENCES_TINB")+":", Gtk::ALIGN_LEFT));
-
-    dnti = Gtk::manage (new Gtk::ComboBoxText ());
-    dnti->append_text (M("PREFERENCES_TISTD"));
-    dnti->append_text (M("PREFERENCES_TIMAX"));
-    Gtk::Table* colon2 = Gtk::manage (new Gtk::Table (1, 3));
-    colon2->attach (*dntilab, 0, 1, 0, 1, Gtk::FILL, Gtk::SHRINK, 2, 2);
-    colon2->attach (*dnti, 1, 2, 0, 1, Gtk::EXPAND | Gtk::FILL | Gtk::SHRINK, Gtk::SHRINK, 2, 2);
-    colon2->attach (*restartNeeded4, 2, 3, 0, 1, Gtk::FILL, Gtk::SHRINK, 2, 2);
-    vbdenoise->pack_start (*colon2, Gtk::PACK_SHRINK, 4);
-*/
-
-    Gtk::Frame* fclut = Gtk::manage( new Gtk::Frame (M("PREFERENCES_CLUTSCACHE")) ); 
-    Gtk::HBox* clutCacheSizeHB = Gtk::manage( new Gtk::HBox () );
-    clutCacheSizeHB->set_border_width(4);
-    clutCacheSizeHB->set_spacing(4);
-    Gtk::Label* CLUTLl = Gtk::manage( new Gtk::Label (M("PREFERENCES_CLUTSCACHE_LABEL") + ":", Gtk::ALIGN_LEFT));
-    clutCacheSizeSB = Gtk::manage( new Gtk::SpinButton () );
-    clutCacheSizeSB->set_digits (0);
-    clutCacheSizeSB->set_increments (1, 5);
-    clutCacheSizeSB->set_max_length(2);  // Will this be sufficient? :)
-
-
-#ifdef _OPENMP
-    clutCacheSizeSB->set_range (1, 2*omp_get_num_procs());
-#else
-    clutCacheSizeSB->set_range (1, 8);
-#endif
-
-    clutCacheSizeHB->pack_start (*CLUTLl, Gtk::PACK_SHRINK, 0);
-    clutCacheSizeHB->pack_end (*clutCacheSizeSB, Gtk::PACK_SHRINK, 0);
-
-    fclut->add (*clutCacheSizeHB);
-    mainContainer->pack_start (*fclut, Gtk::PACK_SHRINK, 4);
-
-    Gtk::Frame* finspect = Gtk::manage(  new Gtk::Frame (M("PREFERENCES_INSPECT_LABEL")) );
-
-    Gtk::HBox* maxIBuffersHB = Gtk::manage( new Gtk::HBox () );
-    maxIBuffersHB->set_border_width(4);
-    maxIBuffersHB->set_spacing(4);
-    maxIBuffersHB->set_tooltip_text(M("PREFERENCES_INSPECT_MAXBUFFERS_TOOLTIP"));
-    Gtk::Label* maxIBufferLbl = Gtk::manage( new Gtk::Label (M("PREFERENCES_INSPECT_MAXBUFFERS_LABEL") + ":", Gtk::ALIGN_LEFT));
-    maxInspectorBuffersSB = Gtk::manage( new Gtk::SpinButton () );
-    maxInspectorBuffersSB->set_digits (0);
-    maxInspectorBuffersSB->set_increments (1, 5);
-    maxInspectorBuffersSB->set_max_length(2);
-    maxInspectorBuffersSB->set_range (1, 12);  // ... we have to set a limit, 12 seem to be enough even for systems with tons of RAM
-    maxIBuffersHB->pack_start (*maxIBufferLbl, Gtk::PACK_SHRINK, 0);
-    maxIBuffersHB->pack_end (*maxInspectorBuffersSB, Gtk::PACK_SHRINK, 0);
-    finspect->add(*maxIBuffersHB);
-
-    mainContainer->pack_start(*finspect, Gtk::PACK_SHRINK, 4);
 
     return mainContainer;
 }
@@ -744,64 +746,72 @@ Gtk::Widget* Preferences::getGeneralPanel () {
 
     Gtk::VBox* mvbsd = Gtk::manage( new Gtk::VBox () );
 
-    Gtk::Frame* fworklflow = Gtk::manage(  new Gtk::Frame (M("PREFERENCES_WORKFLOW")) );
-    Gtk::HBox* hbworkflow = Gtk::manage( new Gtk::HBox () );
-    hbworkflow->set_border_width (4);
-    Gtk::Label* flayoutlab = Gtk::manage( new Gtk::Label (M("PREFERENCES_EDITORLAYOUT")+":") );
-    editorLayout = Gtk::manage( new Gtk::ComboBoxText () );
-    editorLayout->set_size_request(45, -1);
+    Gtk::Frame* fworklflow = Gtk::manage (new Gtk::Frame (M("PREFERENCES_WORKFLOW")));
+    Gtk::VBox* vbworkflow = Gtk::manage (new Gtk::VBox (false, 4));
+    vbworkflow->set_border_width (4);
 
+    Gtk::HBox* hbworkflow = Gtk::manage (new Gtk::HBox (false, 4));
+    Gtk::Label* flayoutlab = Gtk::manage (new Gtk::Label (M("PREFERENCES_EDITORLAYOUT")+":"));
+    editorLayout = Gtk::manage (new Gtk::ComboBoxText ());
     editorLayout->append_text (M("PREFERENCES_SINGLETAB"));
     editorLayout->append_text (M("PREFERENCES_SINGLETABVERTAB"));
     editorLayout->append_text (M("PREFERENCES_MULTITAB"));
     editorLayout->append_text (M("PREFERENCES_MULTITABDUALMON"));
     editorLayout->set_active (2);
-    editorLayout->signal_changed().connect( sigc::mem_fun(*this, &Preferences::layoutComboChanged) );
+    editorLayout->signal_changed().connect (sigc::mem_fun(*this, &Preferences::layoutComboChanged));
     layoutComboChanged(); // update the tooltip
-
-    hbworkflow->pack_start (*flayoutlab, Gtk::PACK_SHRINK, 4);
+    hbworkflow->pack_start (*flayoutlab, Gtk::PACK_SHRINK);
     hbworkflow->pack_start (*editorLayout);
-    Gtk::Label* lNextStart = Gtk::manage( new Gtk::Label (Glib::ustring(" (") + M("PREFERENCES_APPLNEXTSTARTUP") + ")") );
-    hbworkflow->pack_end (*lNextStart, Gtk::PACK_SHRINK, 4);
+    Gtk::Label* lNextStart = Gtk::manage( new Gtk::Label (Glib::ustring("(") + M("PREFERENCES_APPLNEXTSTARTUP") + ")") );
+    hbworkflow->pack_end (*lNextStart, Gtk::PACK_SHRINK);
+    vbworkflow->pack_start (*hbworkflow, Gtk::PACK_SHRINK);
 
-    Gtk::VBox* vbworkflow = Gtk::manage( new Gtk::VBox () );
-    vbworkflow->pack_start (*hbworkflow, Gtk::PACK_SHRINK, 4);
+    Gtk::HBox* curveBBoxPosHB = Gtk::manage (new Gtk::HBox (false, 4));
+    Gtk::Label* curveBBoxPosL = Gtk::manage (new Gtk::Label (M("PREFERENCES_CURVEBBOXPOS")+":"));
+    Gtk::Label* curveBBoxPosRestartL = Gtk::manage (new Gtk::Label (Glib::ustring("(") + M("PREFERENCES_APPLNEXTSTARTUP") + ")"));
+    curveBBoxPosC = Gtk::manage (new Gtk::ComboBoxText ());
+    curveBBoxPosC->append_text (M("PREFERENCES_CURVEBBOXPOS_ABOVE"));
+    curveBBoxPosC->append_text (M("PREFERENCES_CURVEBBOXPOS_RIGHT"));
+    curveBBoxPosC->append_text (M("PREFERENCES_CURVEBBOXPOS_BELOW"));
+    curveBBoxPosC->append_text (M("PREFERENCES_CURVEBBOXPOS_LEFT"));
+    curveBBoxPosC->set_active (1);
+    curveBBoxPosHB->pack_start (*curveBBoxPosL, Gtk::PACK_SHRINK);
+    curveBBoxPosHB->pack_start (*curveBBoxPosC);
+    curveBBoxPosHB->pack_start (*curveBBoxPosRestartL, Gtk::PACK_SHRINK);
+    vbworkflow->pack_start (*curveBBoxPosHB, Gtk::PACK_SHRINK);
 
     Gtk::HBox* hbworkflow2 = Gtk::manage( new Gtk::HBox () );
     ckbHistogramPositionLeft =  Gtk::manage( new Gtk::CheckButton (M("PREFERENCES_HISTOGRAMPOSITIONLEFT")) );
-    hbworkflow2->pack_start (*ckbHistogramPositionLeft, Gtk::PACK_SHRINK, 4);
+    hbworkflow2->pack_start (*ckbHistogramPositionLeft);
     ckbHistogramWorking =  Gtk::manage( new Gtk::CheckButton (M("PREFERENCES_HISTOGRAMWORKING")) );
-	ckbHistogramWorking->set_tooltip_markup (M("PREFERENCES_HISTOGRAM_TOOLTIP"));
-	
-    hbworkflow2->pack_start (*ckbHistogramWorking, Gtk::PACK_SHRINK, 4);
-    vbworkflow->pack_start (*hbworkflow2, Gtk::PACK_SHRINK, 4);
-    
+    ckbHistogramWorking->set_tooltip_markup (M("PREFERENCES_HISTOGRAM_TOOLTIP"));
+    hbworkflow2->pack_start (*ckbHistogramWorking);
+    vbworkflow->pack_start (*hbworkflow2, Gtk::PACK_SHRINK);
+
     ckbShowProfileSelector =  Gtk::manage( new Gtk::CheckButton (M("PREFERENCES_SHOWPROFILESELECTOR")) );
     Gtk::HBox* hbworkflow2d5 = Gtk::manage( new Gtk::HBox () );
-    hbworkflow2d5->pack_start (*ckbShowProfileSelector, Gtk::PACK_SHRINK, 4);
-    vbworkflow->pack_start (*hbworkflow2d5, Gtk::PACK_SHRINK, 4);
+    hbworkflow2d5->pack_start (*ckbShowProfileSelector, Gtk::PACK_SHRINK);
+    vbworkflow->pack_start (*hbworkflow2d5, Gtk::PACK_SHRINK);
 
     Gtk::HBox* hbworkflow3 = Gtk::manage( new Gtk::HBox () );
     ckbFileBrowserToolbarSingleRow =  Gtk::manage( new Gtk::CheckButton (M("PREFERENCES_FILEBROWSERTOOLBARSINGLEROW")) );
+    ckbShowFilmStripToolBar =  Gtk::manage( new Gtk::CheckButton (M("PREFERENCES_SHOWFILMSTRIPTOOLBAR")) );
+    hbworkflow3->pack_start (*ckbFileBrowserToolbarSingleRow);
+    hbworkflow3->pack_start (*ckbShowFilmStripToolBar);
+    vbworkflow->pack_start (*hbworkflow3, Gtk::PACK_SHRINK);
 
-    hbworkflow3->pack_start (*ckbFileBrowserToolbarSingleRow, Gtk::PACK_SHRINK, 4);
-    vbworkflow->pack_start (*hbworkflow3, Gtk::PACK_SHRINK, 0);
-
-    Gtk::HBox* hbworkflow4 = Gtk::manage( new Gtk::HBox () );
-
+    Gtk::HBox* hbworkflow4 = Gtk::manage( new Gtk::HBox (false, 4) );
     Gtk::Label* hb4label =  Gtk::manage( new Gtk::Label (M("PREFERENCES_TP_LABEL")) );
-    hbworkflow4->pack_start (*hb4label, Gtk::PACK_SHRINK, 4);
+    hbworkflow4->pack_start (*hb4label, Gtk::PACK_SHRINK);
     ckbHideTPVScrollbar =  Gtk::manage( new Gtk::CheckButton (M("PREFERENCES_TP_VSCROLLBAR")) );
-    hbworkflow4->pack_start (*ckbHideTPVScrollbar, Gtk::PACK_SHRINK, 4);
-
+    hbworkflow4->pack_start (*ckbHideTPVScrollbar, Gtk::PACK_SHRINK);
     ckbUseIconNoText =  Gtk::manage( new Gtk::CheckButton (M("PREFERENCES_TP_USEICONORTEXT")) );
-    hbworkflow4->pack_start (*ckbUseIconNoText, Gtk::PACK_SHRINK, 4);
-
-    vbworkflow->pack_start (*hbworkflow4, Gtk::PACK_SHRINK, 4);
+    hbworkflow4->pack_start (*ckbUseIconNoText, Gtk::PACK_SHRINK);
+    vbworkflow->pack_start (*hbworkflow4, Gtk::PACK_SHRINK);
 
     fworklflow->add (*vbworkflow);
-    mvbsd->pack_start (*fworklflow, Gtk::PACK_SHRINK, 4);
-     
+    mvbsd->pack_start (*fworklflow, Gtk::PACK_SHRINK);
+
     Gtk::Frame* flang = Gtk::manage( new Gtk::Frame (M("PREFERENCES_DEFAULTLANG")) );
     Gtk::HBox* hblang = Gtk::manage( new Gtk::HBox () );
     hblang->set_border_width (4);
@@ -1285,7 +1295,6 @@ void Preferences::storePreferences () {
     moptions.defProfImg          = iprofiles->getFullPathFromActiveRow();
     if (moptions.defProfImg.empty()) moptions.defProfImg = DEFPROFILE_INTERNAL;
 
-
     moptions.dateFormat          = dateformat->get_text();
     moptions.panAccelFactor      = (int)panFactor->get_value();
     moptions.fbShowDateTime  = showDateTime->get_active ();
@@ -1303,7 +1312,7 @@ void Preferences::storePreferences () {
     moptions.theme           = theme->get_active_text ();
     moptions.slimUI          = slimUI->get_active ();
     moptions.useSystemTheme  = chUseSystemTheme->get_active ();
-     
+
     Gdk::Color cropCol=butCropCol->get_color();
     moptions.cutOverlayBrush[0]=cropCol.get_red_p();
     moptions.cutOverlayBrush[1]=cropCol.get_green_p();
@@ -1357,6 +1366,9 @@ void Preferences::storePreferences () {
     moptions.rtSettings.leveldnaut   = dnaut->get_active_row_number ();
     moptions.rtSettings.nrwavlevel   = dnwavlev->get_active_row_number ();
     moptions.rtSettings.leveldnautsimpl   = dnautsimpl->get_active_row_number ();
+    moptions.rtSettings.daubech 			= cbdaubech->get_active ();
+
+    moptions.prevdemo = (prevdemo_t)cprevdemo->get_active_row_number ();
 
     if (sdcurrent->get_active ()) 
         moptions.startupDir = STARTUPDIR_CURRENT;
@@ -1376,14 +1388,14 @@ void Preferences::storePreferences () {
         moptions.parseExtensions.push_back (c[i][extensionColumns.ext]);
         moptions.parseExtensionsEnabled.push_back (c[i][extensionColumns.enabled]);
     }
-    
+
     moptions.maxThumbnailHeight = (int)maxThumbSize->get_value ();
     moptions.maxCacheEntries = (int)maxCacheEntries->get_value ();
     moptions.overlayedFileNames = overlayedFileNames->get_active ();
     moptions.filmStripOverlayedFileNames = filmStripOverlayedFileNames->get_active();
     moptions.sameThumbSize = sameThumbSize->get_active();
     moptions.internalThumbIfUntouched = ckbInternalThumbIfUntouched->get_active ();
-    
+
     moptions.saveParamsFile = saveParamsFile->get_active ();
     moptions.saveParamsCache = saveParamsCache->get_active ();
     moptions.paramsLoadLocation = (PPLoadLocation)loadParamsPreference->get_active_row_number ();
@@ -1406,9 +1418,11 @@ void Preferences::storePreferences () {
     moptions.multiDisplayMode = editorMode==3 ? 1:0;
     moptions.mainNBVertical = editorMode==1;
 
+    moptions.curvebboxpos = curveBBoxPosC->get_active_row_number();
     moptions.histogramPosition = ckbHistogramPositionLeft->get_active() ? 1 : 2;
     moptions.showProfileSelector = ckbShowProfileSelector->get_active();
     moptions.FileBrowserToolbarSingleRow = ckbFileBrowserToolbarSingleRow->get_active();
+    moptions.showFilmStripToolBar = ckbShowFilmStripToolBar->get_active();
     moptions.hideTPVScrollbar = ckbHideTPVScrollbar->get_active();
     moptions.overwriteOutputFile = chOverwriteOutputFile->get_active ();
     moptions.UseIconNoText = ckbUseIconNoText->get_active();
@@ -1464,6 +1478,8 @@ void Preferences::fillPreferences () {
     dnaut->set_active (moptions.rtSettings.leveldnaut);
     dnautsimpl->set_active (moptions.rtSettings.leveldnautsimpl);
     dnwavlev->set_active (moptions.rtSettings.nrwavlevel);
+    cprevdemo->set_active (moptions.prevdemo);
+    cbdaubech->set_active (moptions.rtSettings.daubech);
 	
 //	cbAutocielab->set_active (moptions.rtSettings.autocielab);
 	cbciecamfloat->set_active (moptions.rtSettings.ciecamfloat);
@@ -1553,10 +1569,12 @@ void Preferences::fillPreferences () {
     else 
         editorLayout->set_active(moptions.multiDisplayMode ? 3 : 2);
 
+    curveBBoxPosC->set_active(moptions.curvebboxpos);
     ckbHistogramPositionLeft->set_active(moptions.histogramPosition==1);
  //   ckbHistogramWorking->set_active(moptions.histogramWorking==1);
     ckbShowProfileSelector->set_active(moptions.showProfileSelector);
     ckbFileBrowserToolbarSingleRow->set_active(moptions.FileBrowserToolbarSingleRow);
+    ckbShowFilmStripToolBar->set_active(moptions.showFilmStripToolBar);
     ckbHideTPVScrollbar->set_active(moptions.hideTPVScrollbar);
     ckbUseIconNoText->set_active(moptions.UseIconNoText);
 
@@ -1860,6 +1878,10 @@ void Preferences::workflowUpdate (){
     if(moptions.FileBrowserToolbarSingleRow != options.FileBrowserToolbarSingleRow) {
     	// Update the position of the Query toolbar
     	parent->updateFBQueryTB(moptions.FileBrowserToolbarSingleRow);
+    }
+    if(moptions.showFilmStripToolBar != options.showFilmStripToolBar) {
+    	// Update the visibility of FB toolbar
+    	parent->updateFBToolBarVisibility(moptions.showFilmStripToolBar);
     }
     if(moptions.histogramPosition != options.histogramPosition) {
     	// Update the position of the Histogram

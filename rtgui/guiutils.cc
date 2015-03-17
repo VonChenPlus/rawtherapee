@@ -34,6 +34,12 @@ unsigned int MyReaderLock::readerLockCounter = 0;
 unsigned int MyWriterLock::writerLockCounter = 0;
 #endif
 
+Glib::RefPtr<Gdk::Pixbuf> MyExpander::inconsistentPBuf;
+Glib::RefPtr<Gdk::Pixbuf> MyExpander::enabledPBuf;
+Glib::RefPtr<Gdk::Pixbuf> MyExpander::disabledPBuf;
+Glib::RefPtr<Gdk::Pixbuf> MyExpander::openedPBuf;
+Glib::RefPtr<Gdk::Pixbuf> MyExpander::closedPBuf;
+
 Glib::ustring escapeHtmlChars(const Glib::ustring &src) {
 
     // Sources chars to be escaped
@@ -127,20 +133,19 @@ void writeFailed (Gtk::Window& parent, const std::string& filename) {
     msgd.run ();
 }
 
-void drawCrop (Cairo::RefPtr<Cairo::Context> cr, int imx, int imy, int imw, int imh, int startx, int starty, double scale, const rtengine::procparams::CropParams& cparams, bool drawGuide) {
+void drawCrop (Cairo::RefPtr<Cairo::Context> cr, int imx, int imy, int imw, int imh, int startx, int starty, double scale, const rtengine::procparams::CropParams& cparams, bool drawGuide, bool useBgColor, bool fullImageVisible) {
 
     cr->set_line_width (0.);
     cr->rectangle (imx, imy, imw, imh);
     cr->clip ();
-
+	
     double c1x = (cparams.x-startx)*scale;
     double c1y = (cparams.y-starty)*scale;
-    double c2x = (cparams.x+cparams.w-1-startx)*scale;
-    double c2y = (cparams.y+cparams.h-1-starty)*scale;
-
+    double c2x = (cparams.x+cparams.w-startx)*scale - (fullImageVisible ? 0.0 : 1.0);
+    double c2y = (cparams.y+cparams.h-starty)*scale - (fullImageVisible ? 0.0 : 1.0);
     // crop overlay color, linked with crop windows background
-    if (options.bgcolor==0)
-    cr->set_source_rgba (options.cutOverlayBrush[0], options.cutOverlayBrush[1], options.cutOverlayBrush[2], options.cutOverlayBrush[3]);
+    if (options.bgcolor==0 || !useBgColor)
+		cr->set_source_rgba (options.cutOverlayBrush[0], options.cutOverlayBrush[1], options.cutOverlayBrush[2], options.cutOverlayBrush[3]);
     else if (options.bgcolor==1)
         cr->set_source_rgb (0,0,0);
     else if (options.bgcolor==2)
@@ -157,8 +162,14 @@ void drawCrop (Cairo::RefPtr<Cairo::Context> cr, int imx, int imy, int imw, int 
     if (cparams.guide!="None" && drawGuide) {
         double rectx1 = round(c1x) + imx + 0.5;
         double recty1 = round(c1y) + imy + 0.5;
-        double rectx2 = min(round(c2x) + imx + 0.5, imx+imw-0.5);
-        double recty2 = min(round(c2y) + imy + 0.5, imy+imh-0.5);
+        double rectx2 = round(c2x) + imx + 0.5;
+        double recty2 = round(c2y) + imy + 0.5;
+
+        if(fullImageVisible) {
+			rectx2 = min(rectx2, imx+imw-0.5);
+			recty2 = min(recty2, imy+imh-0.5);
+        }
+
         cr->set_line_width (1.0);
         cr->set_source_rgba (1.0, 1.0, 1.0, 0.618);
         cr->move_to (rectx1, recty1);
@@ -180,7 +191,7 @@ void drawCrop (Cairo::RefPtr<Cairo::Context> cr, int imx, int imy, int imw, int 
         ds.resize (0);
         cr->set_dash (ds, 0);
         
-        if (cparams.guide!="Rule of diagonals") {
+        if (cparams.guide!="Rule of diagonals" && cparams.guide!="Golden Triangle 1" && cparams.guide!="Golden Triangle 2") {
             // draw guide lines
             std::vector<double> horiz_ratios;
             std::vector<double> vert_ratios;
@@ -191,22 +202,12 @@ void drawCrop (Cairo::RefPtr<Cairo::Context> cr, int imx, int imy, int imw, int 
                 vert_ratios.push_back (1.0/3.0);
                 vert_ratios.push_back (2.0/3.0);
             }
-            else if (cparams.guide=="Harmonic means 1") {
+            else if (!strncmp(cparams.guide.data(),"Harmonic means",14)) {
                 horiz_ratios.push_back (1.0-0.618);
-                vert_ratios.push_back (1.0-0.618);
-            }
-            else if (cparams.guide=="Harmonic means 2") {
-                horiz_ratios.push_back (0.618);
-                vert_ratios.push_back (1.0-0.618);
-            }
-            else if (cparams.guide=="Harmonic means 3") {
-                horiz_ratios.push_back (1.0-0.618);
-                vert_ratios.push_back (0.618);
-            }
-            else if (cparams.guide=="Harmonic means 4") {
                 horiz_ratios.push_back (0.618);
                 vert_ratios.push_back (0.618);
-            } 
+                vert_ratios.push_back (1.0-0.618);
+            }
             else if (cparams.guide=="Grid") {
                 // To have even distribution, normalize it a bit
                 const int longSideNumLines=10;
@@ -271,7 +272,7 @@ void drawCrop (Cairo::RefPtr<Cairo::Context> cr, int imx, int imy, int imw, int 
                 cr->set_dash (ds, 0);
             }           
         }
-        else {
+        else if (cparams.guide=="Rule of diagonals") {
             double corners_from[4][2];
             double corners_to[4][2];
             int mindim = min(rectx2-rectx1, recty2-recty1);
@@ -306,11 +307,424 @@ void drawCrop (Cairo::RefPtr<Cairo::Context> cr, int imx, int imy, int imw, int 
                 ds.resize (0);
                 cr->set_dash (ds, 0);
             }
+        } else if (cparams.guide=="Golden Triangle 1" || cparams.guide=="Golden Triangle 2") {
+        	// main diagonal
+			if(cparams.guide=="Golden Triangle 2") {
+				std:swap(rectx1,rectx2);
+			}
+			cr->set_source_rgba (1.0, 1.0, 1.0, 0.618);
+			cr->move_to (rectx1, recty1);
+			cr->line_to (rectx2, recty2);
+			cr->stroke ();
+			cr->set_source_rgba (0.0, 0.0, 0.0, 0.618);
+			std::valarray<double> ds (1);
+			ds[0] = 4;
+			cr->set_dash (ds, 0);
+			cr->move_to (rectx1, recty1);
+			cr->line_to (rectx2, recty2);
+			cr->stroke ();
+			ds.resize (0);
+			cr->set_dash (ds, 0);
+
+			double height = recty2 - recty1;
+			double width = rectx2 - rectx1;
+			double d = sqrt(height*height + width*width);
+			double alpha = asin(width/d);
+			double beta = asin(height/d);
+			double a = sin(beta) * height;
+			double b = sin(alpha) * height;
+
+			double x = (a*b)/height;
+			double y = height - (b*(d-a))/width;
+			cr->set_source_rgba (1.0, 1.0, 1.0, 0.618);
+			cr->move_to (rectx1, recty2);
+			cr->line_to (rectx1+x, recty1+y);
+			cr->stroke ();
+			cr->set_source_rgba (0.0, 0.0, 0.0, 0.618);
+			ds.resize (1);
+			ds[0] = 4;
+			cr->set_dash (ds, 0);
+			cr->move_to (rectx1, recty2);
+			cr->line_to (rectx1+x, recty1+y);
+			cr->stroke ();
+			ds.resize (0);
+			cr->set_dash (ds, 0);
+
+			x = width - (a*b)/height;
+			y = (b*(d-a))/width;
+			cr->set_source_rgba (1.0, 1.0, 1.0, 0.618);
+			cr->move_to (rectx2, recty1);
+			cr->line_to (rectx1+x, recty1+y);
+			cr->stroke ();
+			cr->set_source_rgba (0.0, 0.0, 0.0, 0.618);
+			ds.resize (1);
+			ds[0] = 4;
+			cr->set_dash (ds, 0);
+			cr->move_to (rectx2, recty1);
+			cr->line_to (rectx1+x, recty1+y);
+			cr->stroke ();
+			ds.resize (0);
+			cr->set_dash (ds, 0);
         }
     }
     cr->reset_clip ();
 }
 
+bool ExpanderBox::on_expose_event(GdkEventExpose* event) {
+	bool retVal = Gtk::EventBox::on_expose_event(event);
+
+	if (!options.useSystemTheme) {
+		Glib::RefPtr<Gdk::Window> window = get_window();
+		Glib::RefPtr<Gtk::Style> style = get_style ();
+		Cairo::RefPtr<Cairo::Context> cr = window->create_cairo_context();
+
+		int x_, y_, w_, h_, foo;
+		window->get_geometry(x_, y_, w_, h_, foo);
+		double x = 0.;
+		double y = 0.;
+		double w = double(w_);
+		double h = double(h_);
+
+		cr->set_antialias (Cairo::ANTIALIAS_NONE);
+
+		// draw a frame
+		cr->set_line_width (1.0);
+		Gdk::Color c = style->get_fg (Gtk::STATE_NORMAL);
+		cr->set_source_rgb (c.get_red_p(), c.get_green_p(), c.get_blue_p());
+		cr->move_to(x+0.5, y+0.5);
+		cr->line_to(x+w, y+0.5);
+		cr->line_to(x+w, y+h);
+		cr->line_to(x+0.5, y+h);
+		cr->line_to(x+0.5, y+0.5);
+		cr->stroke ();
+	}
+	return retVal;
+}
+
+ExpanderBox::ExpanderBox( Gtk::Container *p):pC(p) {
+	set_name ("ExpanderBox");
+	updateStyle();
+}
+
+void ExpanderBox::on_style_changed (const Glib::RefPtr<Gtk::Style>& style) {
+	updateStyle();
+}
+
+void ExpanderBox::updateStyle() {
+	set_border_width(options.slimUI ? 2 : 8);  // Outer space around the tool's frame 2:7
+}
+
+void ExpanderBox::show_all() {
+	// ask childs to show themselves, but not us (remain unchanged)
+	Gtk::Container::show_all_children(true);
+}
+
+void ExpanderBox::showBox() {
+	Gtk::EventBox::show();
+}
+
+void ExpanderBox::hideBox() {
+	Gtk::EventBox::hide();
+}
+
+void MyExpander::init() {
+    inconsistentPBuf = Gdk::Pixbuf::create_from_file(RTImage::findIconAbsolutePath("expanderInconsistent.png"));
+    enabledPBuf = Gdk::Pixbuf::create_from_file(RTImage::findIconAbsolutePath("expanderEnabled.png"));
+    disabledPBuf = Gdk::Pixbuf::create_from_file(RTImage::findIconAbsolutePath("expanderDisabled.png"));
+    openedPBuf = Gdk::Pixbuf::create_from_file(RTImage::findIconAbsolutePath("expanderOpened.png"));
+    closedPBuf = Gdk::Pixbuf::create_from_file(RTImage::findIconAbsolutePath("expanderClosed.png"));
+}
+
+MyExpander::MyExpander(bool useEnabled, Gtk::Widget* titleWidget) :
+        enabled(false), inconsistent(false), flushEvent(false), expBox(NULL),
+        child(NULL), headerWidget(NULL), statusImage(NULL),
+        label(NULL), useEnabled(useEnabled)
+{
+    set_spacing(options.slimUI ? 0 : 2);
+    set_name("MyExpander");
+    set_can_focus(false);
+
+    headerHBox = Gtk::manage( new Gtk::HBox());
+    headerHBox->set_can_focus(false);
+
+    if (useEnabled) {
+        statusImage = Gtk::manage(new Gtk::Image(disabledPBuf));
+        imageEvBox = Gtk::manage(new Gtk::EventBox());
+        imageEvBox->add(*statusImage);
+        imageEvBox->set_above_child(true);
+        imageEvBox->signal_button_release_event().connect( sigc::mem_fun(this, & MyExpander::on_enabled_change) );
+        imageEvBox->signal_enter_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_enable), false );
+        imageEvBox->signal_leave_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_enable), false );
+        headerHBox->pack_start(*imageEvBox, Gtk::PACK_SHRINK, 0);
+    }
+    else {
+        statusImage = Gtk::manage(new Gtk::Image(openedPBuf));
+        headerHBox->pack_start(*statusImage, Gtk::PACK_SHRINK, 0);
+    }
+    statusImage->set_can_focus(false);
+
+    if (titleWidget) {
+        headerHBox->pack_start(*titleWidget, Gtk::PACK_EXPAND_WIDGET, 0);
+        headerWidget = titleWidget;
+    }
+
+    titleEvBox = Gtk::manage(new Gtk::EventBox());
+    titleEvBox->set_name("MyExpanderTitle");
+    titleEvBox->add(*headerHBox);
+    titleEvBox->set_above_child(false);  // this is the key! By making it below the child, they will get the events first.
+    titleEvBox->set_can_focus(false);
+
+    pack_start(*titleEvBox, Gtk::PACK_EXPAND_WIDGET, 0);
+
+    updateStyle();
+    titleEvBox->signal_button_release_event().connect( sigc::mem_fun(this, & MyExpander::on_toggle) );
+    titleEvBox->signal_enter_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_title), false);
+    titleEvBox->signal_leave_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_title), false);
+}
+
+MyExpander::MyExpander(bool useEnabled, Glib::ustring titleLabel) :
+        enabled(false), inconsistent(false), flushEvent(false), expBox(NULL),
+        child(NULL), headerWidget(NULL), statusImage(NULL),
+        label(NULL), useEnabled(useEnabled)
+{
+    set_spacing(options.slimUI ? 0 : 2);
+    set_name("MyExpander");
+    set_can_focus(false);
+
+    headerHBox = Gtk::manage( new Gtk::HBox());
+    headerHBox->set_can_focus(false);
+
+
+    if (useEnabled) {
+        statusImage = Gtk::manage(new Gtk::Image(disabledPBuf));
+        imageEvBox = Gtk::manage(new Gtk::EventBox());
+        imageEvBox->add(*statusImage);
+        imageEvBox->set_above_child(true);
+        imageEvBox->signal_button_release_event().connect( sigc::mem_fun(this, & MyExpander::on_enabled_change) );
+        imageEvBox->signal_enter_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_enable), false );
+        imageEvBox->signal_leave_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_enable), false );
+        headerHBox->pack_start(*imageEvBox, Gtk::PACK_SHRINK, 0);
+    }
+    else {
+        statusImage = Gtk::manage(new Gtk::Image(openedPBuf));
+        headerHBox->pack_start(*statusImage, Gtk::PACK_SHRINK, 0);
+    }
+    statusImage->set_can_focus(false);
+
+    Glib::ustring str("-");
+    if (!titleLabel.empty())
+        str = titleLabel;
+    label = Gtk::manage(new Gtk::Label());
+    label->set_alignment(Gtk::ALIGN_LEFT, Gtk::ALIGN_CENTER);
+    label->set_markup(Glib::ustring("<b>") + escapeHtmlChars(titleLabel) + Glib::ustring("</b>"));
+    headerHBox->pack_start(*label, Gtk::PACK_EXPAND_WIDGET, 0);
+
+    titleEvBox = Gtk::manage(new Gtk::EventBox());
+    titleEvBox->set_name("MyExpanderTitle");
+    titleEvBox->add(*headerHBox);
+    titleEvBox->set_above_child(false);  // this is the key! By make it below the child, they will get the events first.
+    titleEvBox->set_can_focus(false);
+
+    pack_start(*titleEvBox, Gtk::PACK_EXPAND_WIDGET, 0);
+
+    updateStyle();
+    titleEvBox->signal_button_release_event().connect( sigc::mem_fun(this, & MyExpander::on_toggle));
+    titleEvBox->signal_enter_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_title), false);
+    titleEvBox->signal_leave_notify_event().connect( sigc::mem_fun(this, & MyExpander::on_enter_leave_title), false);
+}
+
+bool MyExpander::on_enter_leave_title (GdkEventCrossing* event) {
+	if (is_sensitive()) {
+		if (event->type == GDK_ENTER_NOTIFY) {
+			titleEvBox->set_state(Gtk::STATE_PRELIGHT);
+			queue_draw();
+		}
+		else if (event->type == GDK_LEAVE_NOTIFY) {
+			titleEvBox->set_state(Gtk::STATE_NORMAL);
+			queue_draw();
+		}
+	}
+	return true;
+}
+
+bool MyExpander::on_enter_leave_enable (GdkEventCrossing* event) {
+	if (is_sensitive()) {
+		if (event->type == GDK_ENTER_NOTIFY) {
+			imageEvBox->set_state(Gtk::STATE_PRELIGHT);
+			queue_draw();
+		}
+		else if (event->type == GDK_LEAVE_NOTIFY) {
+			imageEvBox->set_state(Gtk::STATE_NORMAL);
+			queue_draw();
+		}
+	}
+	return true;
+}
+
+void MyExpander::updateStyle() {
+	headerHBox->set_spacing(options.slimUI ? 2 : 5);
+	headerHBox->set_border_width(options.slimUI ? 1 : 2);
+	set_spacing(0);
+	set_border_width(options.slimUI ? 0 : 1);
+	if (expBox) expBox->updateStyle();
+}
+
+void MyExpander::setLabel (Glib::ustring newLabel) {
+	if (label)
+		label->set_markup(Glib::ustring("<b>") + escapeHtmlChars(newLabel) + Glib::ustring("</b>"));
+}
+
+void MyExpander::setLabel (Gtk::Widget *newWidget) {
+	if (headerWidget) {
+		removeIfThere(headerHBox, headerWidget, false);
+		headerHBox->pack_start(*newWidget, Gtk::PACK_EXPAND_WIDGET, 0);
+	}
+}
+
+bool MyExpander::get_inconsistent() {
+	return inconsistent;
+}
+
+void MyExpander::set_inconsistent(bool isInconsistent) {
+	if (inconsistent != isInconsistent) {
+		inconsistent = isInconsistent;
+		if (useEnabled) {
+			if (isInconsistent)
+				statusImage->set(inconsistentPBuf);
+			else {
+				if (enabled)
+					statusImage->set(enabledPBuf);
+				else
+					statusImage->set(disabledPBuf);
+			}
+		}
+
+	}
+}
+
+bool MyExpander::getUseEnabled() {
+	return useEnabled;
+}
+
+bool MyExpander::getEnabled() {
+	return enabled;
+}
+
+void MyExpander::setEnabled(bool isEnabled) {
+	if (isEnabled != enabled) {
+		if (useEnabled) {
+			if (enabled) {
+				enabled = false;
+				if (!inconsistent) {
+					statusImage->set(disabledPBuf);
+					message.emit();
+				}
+			}
+			else {
+				enabled = true;
+				if (!inconsistent) {
+					statusImage->set(enabledPBuf);
+					message.emit();
+				}
+			}
+		}
+	}
+}
+
+void MyExpander::setEnabledTooltipMarkup(Glib::ustring tooltipMarkup) {
+	if (useEnabled) {
+		statusImage->set_tooltip_markup(tooltipMarkup);
+	}
+}
+
+void MyExpander::setEnabledTooltipText(Glib::ustring tooltipText) {
+	if (useEnabled) {
+		statusImage->set_tooltip_text(tooltipText);
+	}
+}
+
+void MyExpander::set_expanded( bool expanded ) {
+	if (!expBox)
+		return;
+
+	bool isVisible = expBox->is_visible();
+
+	if (isVisible == expanded)
+		return;
+
+	if (!useEnabled) {
+		if (expanded )
+			statusImage->set(openedPBuf);
+		else
+			statusImage->set(closedPBuf);
+	}
+	if (expanded)
+		expBox->showBox();
+	else
+		expBox->hideBox();
+}
+
+bool MyExpander::get_expanded() {
+	return expBox ? expBox->get_visible() : false;
+}
+
+void MyExpander::add  (Gtk::Container& widget) {
+	child = &widget;
+	expBox = Gtk::manage (new ExpanderBox (child));
+	expBox->add (*child);
+	pack_start(*expBox, Gtk::PACK_SHRINK, 0);
+	child->show();
+	expBox->hideBox();
+}
+
+bool MyExpander::on_toggle(GdkEventButton* event) {
+	if (flushEvent) {
+		flushEvent = false;
+		return false;
+	}
+
+	if (!expBox || event->button != 1)
+		return false;
+
+	bool isVisible = expBox->is_visible();
+	if (!useEnabled) {
+		if (isVisible)
+			statusImage->set(closedPBuf);
+		else
+			statusImage->set(openedPBuf);
+	}
+	if (isVisible)
+		expBox->hideBox();
+	else
+		expBox->showBox();
+	return false;
+}
+
+Gtk::Container* MyExpander::getChild() {
+	return child;
+}
+
+// used to connect a function to the enabled_toggled signal
+MyExpander::type_signal_enabled_toggled MyExpander::signal_enabled_toggled() {
+	return message;
+}
+
+// internal use ; when the user clicks on the toggle button, it calls this method that will emit an enabled_change event
+bool MyExpander::on_enabled_change(GdkEventButton* event) {
+	if (event->button == 1) {
+		if (enabled) {
+			enabled = false;
+			statusImage->set(disabledPBuf);
+		}
+		else {
+			enabled = true;
+			statusImage->set(enabledPBuf);
+		}
+		message.emit();
+		flushEvent = true;
+	}
+	return false;
+}
 
 /*
  *

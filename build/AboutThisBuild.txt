@@ -1,0 +1,14 @@
+Branch: default
+Version: 4.2.132
+Changeset: 86425fe4f14b
+Compiler: cc 4.8.3
+Processor: undefined
+System: Linux
+Bit depth: 32 bits
+Gtkmm: V2.24.4
+Build type: debug
+Build flags:  -Wno-unused-result -Wno-aggressive-loop-optimizations -march=native -fopenmp -Werror=unknown-pragmas -g
+Link flags:   -march=native
+OpenMP support: ON
+MMAP support: ON
+

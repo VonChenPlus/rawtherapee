@@ -181,7 +181,7 @@ RTWindow::RTWindow ()
 			mainNB->append_page (*fpanel, *hbf);
 		}
 
-        bpanel = Gtk::manage ( new BatchQueuePanel () );
+        bpanel = Gtk::manage ( new BatchQueuePanel (fpanel->fileCatalog) );
 		bpanel->setParent (this);
 
 		// decorate tab, the label is unimportant since its updated in batchqueuepanel anyway
@@ -748,6 +748,10 @@ void RTWindow::updateTabsUsesIcons (bool useIcons) {
 
 void RTWindow::updateFBQueryTB (bool singleRow) {
 	fpanel->fileCatalog->updateFBQueryTB (singleRow);
+}
+
+void RTWindow::updateFBToolBarVisibility (bool showFilmStripToolBar){
+	fpanel->fileCatalog->updateFBToolBarVisibility (showFilmStripToolBar);
 }
 
 void RTWindow::updateHistogramPosition (int oldPosition, int newPosition) {

@@ -361,7 +361,8 @@ void Options::setDefaults () {
     histogramPosition = 1;
     histogramBar = true;
     histogramFullMode = false;
-
+    curvebboxpos = 1;
+    prevdemo = PD_Sidecar;
     rgbDenoiseThreadLimit = 0;
 #if defined( _OPENMP ) && defined( __x86_64__ )
     clutCacheSize = omp_get_num_procs();
@@ -520,7 +521,7 @@ void Options::setDefaults () {
 			0, //ADDSET_WA_THRES
 			0, //ADDSET_WA_CHRO
 			0, //ADDSET_WA_CHROMA
-			0, //ADDSET_WA_UNIF
+			0, //ADDSET_WA_CONTRAST
 			0, //ADDSET_WA_SKINPROTECT
 			0, //ADDSET_WA_RESCHRO
 			0, //ADDSET_WA_RESCON
@@ -528,6 +529,9 @@ void Options::setDefaults () {
 			0, //ADDSET_WA_THRR
 			0, //ADDSET_WA_THRRH
 			0, //ADDSET_WA_SKYPROTECT
+			0, //ADDSET_WA_EDGRAD
+			0, //ADDSET_WA_EDGVAL
+			0, //ADDSET_WA_STRENGTH
 			
 	};
     baBehav = std::vector<int> (babehav, babehav+ADDSET_PARAM_NUM);
@@ -554,7 +558,7 @@ void Options::setDefaults () {
 	rtSettings.leveldnaut=0;
 	rtSettings.leveldnliss=0;
 	rtSettings.leveldnautsimpl=0;
-	
+
     rtSettings.monitorProfile = "";
     rtSettings.autoMonitorProfile = false;
     rtSettings.adobe = "RT_Medium_gsRGB"; // put the name of yours profiles (here windows)
@@ -581,6 +585,8 @@ void Options::setDefaults () {
 	rtSettings.autocielab=true;
 	rtSettings.denoiselabgamma=2;
     rtSettings.HistogramWorking = false;
+
+    rtSettings.daubech = false;
 	
     rtSettings.nrauto = 10;//between 2 and 20
     rtSettings.nrautomax = 40;//between 5 and 100
@@ -769,6 +775,8 @@ if (keyFile.has_group ("Performance")) {
     if (keyFile.has_key ("Performance", "SIMPLNRAUT"))            rtSettings.leveldnautsimpl = keyFile.get_integer ("Performance", "SIMPLNRAUT");
     if (keyFile.has_key ("Performance", "ClutCacheSize"))         clutCacheSize              = keyFile.get_integer ("Performance", "ClutCacheSize");
     if (keyFile.has_key ("Performance", "MaxInspectorBuffers"))   maxInspectorBuffers        = keyFile.get_integer ("Performance", "MaxInspectorBuffers");
+    if (keyFile.has_key ("Performance", "PreviewDemosaicFromSidecar"))  prevdemo             = (prevdemo_t)keyFile.get_integer ("Performance", "PreviewDemosaicFromSidecar");
+    if (keyFile.has_key ("Performance", "Daubechies"))            rtSettings.daubech         = keyFile.get_boolean ("Performance", "Daubechies");
 }
 
 if (keyFile.has_group ("GUI")) { 
@@ -817,8 +825,8 @@ if (keyFile.has_group ("GUI")) {
     if (keyFile.has_key ("GUI", "FileBrowserToolbarSingleRow")) FileBrowserToolbarSingleRow = keyFile.get_boolean ("GUI", "FileBrowserToolbarSingleRow");
     if (keyFile.has_key ("GUI", "HideTPVScrollbar"))            hideTPVScrollbar            = keyFile.get_boolean ("GUI", "HideTPVScrollbar");
     if (keyFile.has_key ("GUI", "UseIconNoText"))               UseIconNoText               = keyFile.get_boolean ("GUI", "UseIconNoText");
-    if( keyFile.has_key ("GUI", "HistogramWorking"))            rtSettings.HistogramWorking = keyFile.get_boolean("GUI", "HistogramWorking");
-	
+    if (keyFile.has_key ("GUI", "HistogramWorking"))            rtSettings.HistogramWorking = keyFile.get_boolean ("GUI", "HistogramWorking");
+    if (keyFile.has_key ("GUI", "CurveBBoxPosition"))   curvebboxpos                        = keyFile.get_integer ("GUI", "CurveBBoxPosition");
 }
 
 if (keyFile.has_group ("Crop Settings")) { 
@@ -1054,6 +1062,8 @@ int Options::saveToFile (Glib::ustring fname) {
     keyFile.set_integer ("Performance", "SIMPLNRAUT", rtSettings.leveldnautsimpl);
     keyFile.set_integer ("Performance", "ClutCacheSize", clutCacheSize);
     keyFile.set_integer ("Performance", "MaxInspectorBuffers", maxInspectorBuffers);
+    keyFile.set_integer ("Performance", "PreviewDemosaicFromSidecar", prevdemo);
+    keyFile.set_boolean ("Performance", "Daubechies", rtSettings.daubech);
 
     keyFile.set_string  ("Output", "Format", saveFormat.format);
     keyFile.set_integer ("Output", "JpegQuality", saveFormat.jpegQuality);
@@ -1141,6 +1151,7 @@ int Options::saveToFile (Glib::ustring fname) {
     keyFile.set_boolean ("GUI", "HideTPVScrollbar", hideTPVScrollbar);
     keyFile.set_boolean ("GUI", "UseIconNoText", UseIconNoText);
     keyFile.set_boolean ("GUI", "HistogramWorking", rtSettings.HistogramWorking);
+    keyFile.set_integer ("GUI", "CurveBBoxPosition", curvebboxpos);
 
     //Glib::ArrayHandle<int> crvopen = crvOpen;
     //keyFile.set_integer_list ("GUI", "CurvePanelsExpanded", crvopen);

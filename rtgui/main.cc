@@ -23,6 +23,12 @@
 
 // This file is for your program, I won't touch it again!
 
+#ifdef __GNUC__
+	#if defined(__FAST_MATH__)
+		#error Using the -ffast-math CFLAG is known to lead to problems. Disable it to compile RawTherapee.
+	#endif
+#endif
+
 #include "config.h"
 #include <gtkmm.h>
 #include <giomm.h>
@@ -256,6 +262,7 @@ int main(int argc, char **argv)
    defaultIconTheme->append_search_path(icon_path);
 
    RTImage::setPaths(options);
+   MyExpander::init();  // has to stay AFTER RTImage::setPaths
 
 #ifndef WIN32
    // For an unknown reason, gtkmm 2.22 don't know the gtk-button-images property, while it exists in the documentation...

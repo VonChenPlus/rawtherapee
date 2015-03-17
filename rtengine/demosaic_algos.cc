@@ -58,6 +58,7 @@ namespace rtengine {
 
 
 #define PIX_SORT(a,b) { if ((a)>(b)) {temp=(a);(a)=(b);(b)=temp;} }
+#define PIX_SORTV(av,bv)  tempv = _mm_min_ps(av,bv); bv = _mm_max_ps(av,bv); av = tempv; 
 extern const Settings* settings;
 //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -1185,16 +1186,10 @@ void RawImageSource::jdl_interpolate_omp()  // from "Lassus"
 // IEEE Trans. on Image Processing, vol. 14, pp. 2167-2178,
 // Dec. 2005.
 // Adapted to RT by Jacques Desmis 3/2013
+// Improved speed and reduced memory consumption by Ingo Weyrich 2/2015
 //TODO Tiles to reduce memory consumption
-void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
+SSEFUNCTION void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 {
-	int c, ii;
-	float h0, h1, h2, h3, h4, hs;
-	float (*rix)[6];
-	float (*qix)[6];
-
-
-	char  *buffer;
 	const int width=winw, height=winh;
 	const int ba = 10;
 	const int rr1 = height + 2*ba;
@@ -1203,7 +1198,7 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 	const int w2 = 2*w1;
 	const int w3 = 3*w1;
 	const int w4 = 4*w1;
-	int iter;
+	float h0, h1, h2, h3, h4, hs;
 	h0 = 1.0f;
 	h1 = exp( -1.0f/8.0f);
 	h2 = exp( -4.0f/8.0f);
@@ -1216,106 +1211,133 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 	h3 /= hs;
 	h4 /= hs;
 	int passref;
-	if(iterations <=4) {iter = iterations-1;passref=0;}
-	else if (iterations <=6){iter=3;passref=iterations-4;}
-	else if (iterations <=8){iter=3;passref=iterations-6;}
+	int iter;
+	if(iterations <=4) {
+		iter = iterations-1;
+		passref=0;
+	} else if (iterations <=6) {
+		iter=3;
+		passref=iterations-4;
+	} else if (iterations <=8) {
+		iter=3;
+		passref=iterations-6;
+	}
 	bool applyGamma=true;
-	if(iterations==0) {applyGamma=false;iter=0;} else applyGamma=true;
+	if(iterations==0) {
+		applyGamma=false;
+		iter=0;
+	} else
+		applyGamma=true;
+
+	float *rix[5];
+	float *qix[5];
+	float *buffer = (float *)calloc(rr1*cc1*5*sizeof(float),1);
+	if(buffer == NULL) { // allocation of big block of memory failed, try to get 5 smaller ones
+		printf("lmmse_interpolate_omp: allocation of big memory block failed, try to get 5 smaller ones now...\n");
+		bool allocationFailed = false;
+		for(int i=0;i<5;i++) {
+			qix[i] = (float *)calloc(rr1*cc1*sizeof(float),1);
+			if(!qix[i]) { // allocation of at least one small block failed
+				allocationFailed = true;
+			}
+		}
+		if(allocationFailed) { // fall back to igv_interpolate
+			printf("lmmse_interpolate_omp: allocation of 5 small memory blocks failed, falling back to igv_interpolate...\n");
+			for(int i=0;i<5;i++) { // free the already allocated buffers
+				if(qix[i])
+					free(qix[i]);
+			}
+			igv_interpolate(winw, winh);
+			return;
+		}
+	} else {
+		qix[0] = buffer;
+		for(int i=1;i<5;i++)
+			qix[i] = qix[i-1] + rr1*cc1;
+	}
 
 	if (plistener) {
 		plistener->setProgressStr (Glib::ustring::compose(M("TP_RAW_DMETHOD_PROGRESSBAR"), RAWParams::BayerSensor::methodstring[RAWParams::BayerSensor::lmmse]));
 		plistener->setProgress (0.0);
 	}
-	float (*image)[3];
-	float maxdata=0.f;
-	image = (float (*)[3]) calloc (width*height, sizeof *image);
-	unsigned int a=0;
-#ifdef _OPENMP
-#pragma omp parallel for
-#endif
-	for (int ii=0; ii<height; ii++)
-		for (int jj=0; jj<width; jj++) {
-            image[ii*width+jj][fc(ii,jj)] = CLIP(rawData[ii][jj]);
-		}
-	maxdata=65535.f;
-	if (applyGamma)
-		buffer = (char *)calloc(rr1*cc1*6*sizeof(float)+(int)(maxdata)*sizeof(float),1);
-	else
-		buffer = (char *)calloc(rr1*cc1*6*sizeof(float),1);
 
-	qix = (float (*)[6])buffer;
-{
-	if (plistener) plistener->setProgress (0.1);
-}
+
+	LUTf *gamtab;
+	if(applyGamma)
+		gamtab = &(Color::gammatab_24_17a);
+	else {
+		gamtab = new LUTf(65536, LUT_CLIP_ABOVE | LUT_CLIP_BELOW);
+		for(int i=0;i<65536;i++)
+			(*gamtab)[i] = (float)i / 65535.f;
+	}
+
 
 #ifdef _OPENMP
-#pragma omp parallel firstprivate (image,rix,qix,h0,h1,h2,h3,h4)
+#pragma omp parallel private(rix)
 #endif
 {
 #ifdef _OPENMP
 #pragma omp for
 #endif
-	for (int rrr=0; rrr < rr1; rrr++)
-		for (int ccc=0, row=rrr-ba; ccc < cc1; ccc++) {
+	for (int rrr=ba; rrr < rr1-ba; rrr++) {
+		for (int ccc=ba, row=rrr-ba; ccc < cc1-ba; ccc++) {
 			int col = ccc - ba;
-			rix = qix + rrr*cc1 + ccc;
-			if ((row >= 0) & (row < height) & (col >= 0) & (col < width)) {
-				if (applyGamma)
-					rix[0][4] = Color::gammatab_24_17a[image[row*width+col][FC(row,col)]];
-				else
-					rix[0][4] = (float)image[row*width+col][FC(row,col)]/65535.0f;
-			}
-			else
-				rix[0][4] = 0.f;
+			float *rix = qix[4] + rrr*cc1 + ccc;
+			rix[0] = (*gamtab)[rawData[row][col]];
 		}
+	}
+
 #ifdef _OPENMP
 #pragma omp single
 #endif
 {
-	if (plistener) plistener->setProgress (0.2);
+	if (plistener) plistener->setProgress (0.1);
 }
-
 
 	// G-R(B)
 #ifdef _OPENMP
-#pragma omp for
+#pragma omp for schedule(dynamic,16)
 #endif
 	for (int rr=2; rr < rr1-2; rr++) {
 		// G-R(B) at R(B) location
 		for (int cc=2+(FC(rr,2)&1); cc < cc1-2; cc+=2) {
-			rix = qix + rr*cc1 + cc;
-			float v0 = x00625(rix[-w1-1][4]+rix[-w1+1][4]+rix[w1-1][4]+rix[w1+1][4]) +x0250(rix[0][4]);
+			rix[4] = qix[4] + rr*cc1 + cc;
+			float v0 = x00625(rix[4][-w1-1]+rix[4][-w1+1]+rix[4][w1-1]+rix[4][w1+1]) +x0250(rix[4][0]);
 			// horizontal
-			rix[0][0] = - x0250(rix[ -2][4] + rix[ 2][4])+ xdiv2f(rix[ -1][4] + rix[0][4] + rix[ 1][4]);
+			rix[0] = qix[0] + rr*cc1 + cc;
+			rix[0][0] = - x0250(rix[4][ -2] + rix[4][ 2])+ xdiv2f(rix[4][ -1] + rix[4][0] + rix[4][ 1]);
 			float Y = v0 + xdiv2f(rix[0][0]);
-			if (rix[0][4] > 1.75f*Y)
-				rix[0][0] = ULIM(rix[0][0],rix[ -1][4],rix[ 1][4]);
+			if (rix[4][0] > 1.75f*Y)
+				rix[0][0] = ULIM(rix[0][0],rix[4][ -1],rix[4][ 1]);
 			else
 				rix[0][0] = LIM(rix[0][0],0.0f,1.0f);
-			rix[0][0] -= rix[0][4];
+			rix[0][0] -= rix[4][0];
 			// vertical
-			rix[0][1] = -x0250(rix[-w2][4] + rix[w2][4])+ xdiv2f(rix[-w1][4] + rix[0][4] + rix[w1][4]);
-			Y = v0 + xdiv2f(rix[0][1]);
-			if (rix[0][4] > 1.75f*Y)
-				rix[0][1] = ULIM(rix[0][1],rix[-w1][4],rix[w1][4]);
+			rix[1] = qix[1] + rr*cc1 + cc;
+			rix[1][0] = -x0250(rix[4][-w2] + rix[4][w2])+ xdiv2f(rix[4][-w1] + rix[4][0] + rix[4][w1]);
+			Y = v0 + xdiv2f(rix[1][0]);
+			if (rix[4][0] > 1.75f*Y)
+				rix[1][0] = ULIM(rix[1][0],rix[4][-w1],rix[4][w1]);
 			else
-				rix[0][1] = LIM(rix[0][1],0.0f,1.0f);
-			rix[0][1] -= rix[0][4];
+				rix[1][0] = LIM(rix[1][0],0.0f,1.0f);
+			rix[1][0] -= rix[4][0];
 		}
 		// G-R(B) at G location
 		for (int ccc=2+(FC(rr,3)&1); ccc < cc1-2; ccc+=2) {
-			rix = qix + rr*cc1 + ccc;
-			rix[0][0] = x0250(rix[ -2][4] + rix[ 2][4])- xdiv2f(rix[ -1][4] + rix[0][4] + rix[ 1][4]);
-			rix[0][1] = x0250(rix[-w2][4] + rix[w2][4])- xdiv2f(rix[-w1][4] + rix[0][4] + rix[w1][4]);
-			rix[0][0] = LIM(rix[0][0],-1.0f,0.0f) + rix[0][4];
-			rix[0][1] = LIM(rix[0][1],-1.0f,0.0f) + rix[0][4];
+			rix[0] = qix[0] + rr*cc1 + ccc;
+			rix[1] = qix[1] + rr*cc1 + ccc;
+			rix[4] = qix[4] + rr*cc1 + ccc;
+			rix[0][0] = x0250(rix[4][ -2] + rix[4][ 2])- xdiv2f(rix[4][ -1] + rix[4][0] + rix[4][ 1]);
+			rix[1][0] = x0250(rix[4][-w2] + rix[4][w2])- xdiv2f(rix[4][-w1] + rix[4][0] + rix[4][w1]);
+			rix[0][0] = LIM(rix[0][0],-1.0f,0.0f) + rix[4][0];
+			rix[1][0] = LIM(rix[1][0],-1.0f,0.0f) + rix[4][0];
 		}
 	}
 #ifdef _OPENMP
 #pragma omp single
 #endif
 {
-	if (plistener) plistener->setProgress (0.25);
+	if (plistener) plistener->setProgress (0.2);
 }
 
 
@@ -1325,9 +1347,12 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 #endif
 	for (int rr=4; rr < rr1-4; rr++)
 		for (int cc=4; cc < cc1-4; cc++) {
-			rix = qix + rr*cc1 + cc;
-			rix[0][2] = h0*rix[0][0] + h1*(rix[ -1][0] + rix[ 1][0]) + h2*(rix[ -2][0] + rix[ 2][0]) + h3*(rix[ -3][0] + rix[ 3][0]) + h4*(rix[ -4][0] + rix[ 4][0]);
-			rix[0][3] = h0*rix[0][1] + h1*(rix[-w1][1] + rix[w1][1]) + h2*(rix[-w2][1] + rix[w2][1]) + h3*(rix[-w3][1] + rix[w3][1]) + h4*(rix[-w4][1] + rix[w4][1]);
+			rix[0] = qix[0] + rr*cc1 + cc;
+			rix[2] = qix[2] + rr*cc1 + cc;
+			rix[2][0] = h0*rix[0][0] + h1*(rix[0][ -1] + rix[0][ 1]) + h2*(rix[0][ -2] + rix[0][ 2]) + h3*(rix[0][ -3] + rix[0][ 3]) + h4*(rix[0][ -4] + rix[0][ 4]);
+			rix[1] = qix[1] + rr*cc1 + cc;
+			rix[3] = qix[3] + rr*cc1 + cc;
+			rix[3][0] = h0*rix[1][0] + h1*(rix[1][-w1] + rix[1][w1]) + h2*(rix[1][-w2] + rix[1][w2]) + h3*(rix[1][-w3] + rix[1][w3]) + h4*(rix[1][-w4] + rix[1][w4]);
 		}
 #ifdef _OPENMP
 #pragma omp single
@@ -1336,72 +1361,142 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 	if (plistener) plistener->setProgress (0.3);
 }
 
-
 	// interpolate G-R(B) at R(B)
 #ifdef _OPENMP
-#pragma omp  for
+#pragma omp for
 #endif
-	for (int rr=4; rr < rr1-4; rr++)
-		for (int cc=4+(FC(rr,4)&1); cc < cc1-4; cc+=2) {
-			rix = qix + rr*cc1 + cc;
+	for (int rr=4; rr < rr1-4; rr++) {
+		int cc=4+(FC(rr,4)&1);
+#ifdef __SSE2__
+		__m128 p1v, p2v, p3v, p4v, p5v, p6v, p7v, p8v, p9v, muv, vxv, vnv, xhv, vhv, xvv, vvv;
+		__m128 epsv = _mm_set1_ps(1e-7);
+		__m128 ninev = _mm_set1_ps(9.f);
+		for (; cc < cc1-10; cc+=8) {
+			rix[0] = qix[0] + rr*cc1 + cc;
+			rix[1] = qix[1] + rr*cc1 + cc;
+			rix[2] = qix[2] + rr*cc1 + cc;
+			rix[3] = qix[3] + rr*cc1 + cc;
+			rix[4] = qix[4] + rr*cc1 + cc;
 			// horizontal
-			float mu = (rix[-4][2] + rix[-3][2] + rix[-2][2] + rix[-1][2] + rix[0][2]+ rix[ 1][2] + rix[ 2][2] + rix[ 3][2] + rix[ 4][2]) / 9.0f;
-			float p1 = rix[-4][2] - mu;
-			float p2 = rix[-3][2] - mu;
-			float p3 = rix[-2][2] - mu;
-			float p4 = rix[-1][2] - mu;
-			float p5 = rix[ 0][2] - mu;
-			float p6 = rix[ 1][2] - mu;
-			float p7 = rix[ 2][2] - mu;
-			float p8 = rix[ 3][2] - mu;
-			float p9 = rix[ 4][2] - mu;
-			float vx = 1e-7+p1*p1+p2*p2+p3*p3+p4*p4+p5*p5+p6*p6+p7*p7+p8*p8+p9*p9;
-			p1 = rix[-4][0] - rix[-4][2];
-			p2 = rix[-3][0] - rix[-3][2];
-			p3 = rix[-2][0] - rix[-2][2];
-			p4 = rix[-1][0] - rix[-1][2];
-			p5 = rix[ 0][0] - rix[ 0][2];
-			p6 = rix[ 1][0] - rix[ 1][2];
-			p7 = rix[ 2][0] - rix[ 2][2];
-			p8 = rix[ 3][0] - rix[ 3][2];
-			p9 = rix[ 4][0] - rix[ 4][2];
-			float vn = 1e-7+p1*p1+p2*p2+p3*p3+p4*p4+p5*p5+p6*p6+p7*p7+p8*p8+p9*p9;
-			float xh = (rix[0][0]*vx + rix[0][2]*vn)/(vx + vn);
-			float vh = vx*vn/(vx + vn);
+			p1v = LC2VFU(rix[2][-4]);
+			p2v = LC2VFU(rix[2][-3]);
+			p3v = LC2VFU(rix[2][-2]);
+			p4v = LC2VFU(rix[2][-1]);
+			p5v = LC2VFU(rix[2][ 0]);
+			p6v = LC2VFU(rix[2][ 1]);
+			p7v = LC2VFU(rix[2][ 2]);
+			p8v = LC2VFU(rix[2][ 3]);
+			p9v = LC2VFU(rix[2][ 4]);
+			muv = (p1v + p2v + p3v + p4v + p5v + p6v + p7v + p8v + p9v) / ninev;
+			vxv = epsv+SQRV(p1v-muv)+SQRV(p2v-muv)+SQRV(p3v-muv)+SQRV(p4v-muv)+SQRV(p5v-muv)+SQRV(p6v-muv)+SQRV(p7v-muv)+SQRV(p8v-muv)+SQRV(p9v-muv);
+			p1v -= LC2VFU(rix[0][-4]);
+			p2v -= LC2VFU(rix[0][-3]);
+			p3v -= LC2VFU(rix[0][-2]);
+			p4v -= LC2VFU(rix[0][-1]);
+			p5v -= LC2VFU(rix[0][ 0]);
+			p6v -= LC2VFU(rix[0][ 1]);
+			p7v -= LC2VFU(rix[0][ 2]);
+			p8v -= LC2VFU(rix[0][ 3]);
+			p9v -= LC2VFU(rix[0][ 4]);
+			vnv = epsv+SQRV(p1v)+SQRV(p2v)+SQRV(p3v)+SQRV(p4v)+SQRV(p5v)+SQRV(p6v)+SQRV(p7v)+SQRV(p8v)+SQRV(p9v);
+			xhv = (LC2VFU(rix[0][0])*vxv + LC2VFU(rix[2][0])*vnv)/(vxv + vnv);
+			vhv = vxv*vnv/(vxv + vnv);
+
 			// vertical
-			mu = (rix[-w4][3] + rix[-w3][3] + rix[-w2][3] + rix[-w1][3] + rix[0][3]+rix[ w1][3] + rix[ w2][3] + rix[ w3][3] + rix[ w4][3]) / 9.0f;
-			p1 = rix[-w4][3] - mu;
-			p2 = rix[-w3][3] - mu;
-			p3 = rix[-w2][3] - mu;
-			p4 = rix[-w1][3] - mu;
-			p5 = rix[  0][3] - mu;
-			p6 = rix[ w1][3] - mu;
-			p7 = rix[ w2][3] - mu;
-			p8 = rix[ w3][3] - mu;
-			p9 = rix[ w4][3] - mu;
-			vx = 1e-7+p1*p1+p2*p2+p3*p3+p4*p4+p5*p5+p6*p6+p7*p7+p8*p8+p9*p9;
-			p1 = rix[-w4][1] - rix[-w4][3];
-			p2 = rix[-w3][1] - rix[-w3][3];
-			p3 = rix[-w2][1] - rix[-w2][3];
-			p4 = rix[-w1][1] - rix[-w1][3];
-			p5 = rix[  0][1] - rix[  0][3];
-			p6 = rix[ w1][1] - rix[ w1][3];
-			p7 = rix[ w2][1] - rix[ w2][3];
-			p8 = rix[ w3][1] - rix[ w3][3];
-			p9 = rix[ w4][1] - rix[ w4][3];
-			vn = 1e-7+p1*p1+p2*p2+p3*p3+p4*p4+p5*p5+p6*p6+p7*p7+p8*p8+p9*p9;
-			float xv = (rix[0][1]*vx + rix[0][3]*vn)/(vx + vn);
+			p1v = LC2VFU(rix[3][-w4]);
+			p2v = LC2VFU(rix[3][-w3]);
+			p3v = LC2VFU(rix[3][-w2]);
+			p4v = LC2VFU(rix[3][-w1]);
+			p5v = LC2VFU(rix[3][  0]);
+			p6v = LC2VFU(rix[3][ w1]);
+			p7v = LC2VFU(rix[3][ w2]);
+			p8v = LC2VFU(rix[3][ w3]);
+			p9v = LC2VFU(rix[3][ w4]);
+			muv = (p1v + p2v + p3v + p4v + p5v + p6v + p7v + p8v + p9v) / ninev;
+			vxv = epsv+SQRV(p1v-muv)+SQRV(p2v-muv)+SQRV(p3v-muv)+SQRV(p4v-muv)+SQRV(p5v-muv)+SQRV(p6v-muv)+SQRV(p7v-muv)+SQRV(p8v-muv)+SQRV(p9v-muv);
+			p1v -= LC2VFU(rix[1][-w4]);
+			p2v -= LC2VFU(rix[1][-w3]);
+			p3v -= LC2VFU(rix[1][-w2]);
+			p4v -= LC2VFU(rix[1][-w1]);
+			p5v -= LC2VFU(rix[1][  0]);
+			p6v -= LC2VFU(rix[1][ w1]);
+			p7v -= LC2VFU(rix[1][ w2]);
+			p8v -= LC2VFU(rix[1][ w3]);
+			p9v -= LC2VFU(rix[1][ w4]);
+			vnv = epsv+SQRV(p1v)+SQRV(p2v)+SQRV(p3v)+SQRV(p4v)+SQRV(p5v)+SQRV(p6v)+SQRV(p7v)+SQRV(p8v)+SQRV(p9v);
+			xvv = (LC2VFU(rix[1][0])*vxv + LC2VFU(rix[3][0])*vnv)/(vxv + vnv);
+			vvv = vxv*vnv/(vxv + vnv);
+			// interpolated G-R(B)
+			muv = (xhv*vvv + xvv*vhv)/(vhv + vvv);
+			STC2VFU(rix[4][0], muv);
+		}
+#endif
+		for (; cc < cc1-4; cc+=2) {
+			rix[0] = qix[0] + rr*cc1 + cc;
+			rix[1] = qix[1] + rr*cc1 + cc;
+			rix[2] = qix[2] + rr*cc1 + cc;
+			rix[3] = qix[3] + rr*cc1 + cc;
+			rix[4] = qix[4] + rr*cc1 + cc;
+			// horizontal
+			float p1 = rix[2][-4];
+			float p2 = rix[2][-3];
+			float p3 = rix[2][-2];
+			float p4 = rix[2][-1];
+			float p5 = rix[2][ 0];
+			float p6 = rix[2][ 1];
+			float p7 = rix[2][ 2];
+			float p8 = rix[2][ 3];
+			float p9 = rix[2][ 4];
+			float mu = (p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9) / 9.f;
+			float vx = 1e-7+SQR(p1-mu)+SQR(p2-mu)+SQR(p3-mu)+SQR(p4-mu)+SQR(p5-mu)+SQR(p6-mu)+SQR(p7-mu)+SQR(p8-mu)+SQR(p9-mu);
+			p1 -= rix[0][-4];
+			p2 -= rix[0][-3];
+			p3 -= rix[0][-2];
+			p4 -= rix[0][-1];
+			p5 -= rix[0][ 0];
+			p6 -= rix[0][ 1];
+			p7 -= rix[0][ 2];
+			p8 -= rix[0][ 3];
+			p9 -= rix[0][ 4];
+			float vn = 1e-7+SQR(p1)+SQR(p2)+SQR(p3)+SQR(p4)+SQR(p5)+SQR(p6)+SQR(p7)+SQR(p8)+SQR(p9);
+			float xh = (rix[0][0]*vx + rix[2][0]*vn)/(vx + vn);
+			float vh = vx*vn/(vx + vn);
+
+			// vertical
+			p1 = rix[3][-w4];
+			p2 = rix[3][-w3];
+			p3 = rix[3][-w2];
+			p4 = rix[3][-w1];
+			p5 = rix[3][  0];
+			p6 = rix[3][ w1];
+			p7 = rix[3][ w2];
+			p8 = rix[3][ w3];
+			p9 = rix[3][ w4];
+			mu = (p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9) / 9.f;
+			vx = 1e-7+SQR(p1-mu)+SQR(p2-mu)+SQR(p3-mu)+SQR(p4-mu)+SQR(p5-mu)+SQR(p6-mu)+SQR(p7-mu)+SQR(p8-mu)+SQR(p9-mu);
+			p1 -= rix[1][-w4];
+			p2 -= rix[1][-w3];
+			p3 -= rix[1][-w2];
+			p4 -= rix[1][-w1];
+			p5 -= rix[1][  0];
+			p6 -= rix[1][ w1];
+			p7 -= rix[1][ w2];
+			p8 -= rix[1][ w3];
+			p9 -= rix[1][ w4];
+			vn = 1e-7+SQR(p1)+SQR(p2)+SQR(p3)+SQR(p4)+SQR(p5)+SQR(p6)+SQR(p7)+SQR(p8)+SQR(p9);
+			float xv = (rix[1][0]*vx + rix[3][0]*vn)/(vx + vn);
 			float vv = vx*vn/(vx + vn);
 			// interpolated G-R(B)
-			rix[0][4] = (xh*vv + xv*vh)/(vh + vv);
+			rix[4][0] = (xh*vv + xv*vh)/(vh + vv);
 		}
+	}
+
 #ifdef _OPENMP
 #pragma omp single
 #endif
 {
 	if (plistener) plistener->setProgress (0.4);
 }
-
 
 	// copy CFA values
 #ifdef _OPENMP
@@ -1410,25 +1505,26 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 	for (int rr=0; rr < rr1; rr++)
 		for (int cc=0, row=rr-ba; cc < cc1; cc++) {
 			int col=cc-ba;
-			rix = qix + rr*cc1 + cc;
 			int c = FC(rr,cc);
+			rix[c] = qix[c] + rr*cc1 + cc;
 			if ((row >= 0) & (row < height) & (col >= 0) & (col < width)) {
-				if (applyGamma)
-					rix[0][c] = Color::gammatab_24_17a[image[row*width+col][c]];
-				else
-					rix[0][c] = (float)image[row*width+col][c]/65535.0f;
-				}
+				rix[c][0] = (*gamtab)[rawData[row][col]];
+			}
 			else
-				rix[0][c] = 0.f;
-			if (c != 1) rix[0][1] = rix[0][c] + rix[0][4];
+				rix[c][0] = 0.f;
+			if (c != 1) {
+				rix[1] = qix[1] + rr*cc1 + cc;
+				rix[4] = qix[4] + rr*cc1 + cc;
+				rix[1][0] = rix[c][0] + rix[4][0];
+			}
 		}
+
 #ifdef _OPENMP
 #pragma omp single
 #endif
 {
 	if (plistener) plistener->setProgress (0.5);
 }
-
 
 	// bilinear interpolation for R/B
 	// interpolate R/B at G location
@@ -1437,12 +1533,15 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 #endif
 	for (int rr=1; rr < rr1-1; rr++)
 		for (int cc=1+(FC(rr,2)&1), c=FC(rr,cc+1); cc < cc1-1; cc+=2) {
-			rix = qix + rr*cc1 + cc;
-			rix[0][c] = rix[0][1] + xdiv2f(rix[ -1][c] - rix[ -1][1] + rix[ 1][c] - rix[ 1][1]);
+			rix[c] = qix[c] + rr*cc1 + cc;
+			rix[1] = qix[1] + rr*cc1 + cc;
+			rix[c][0] = rix[1][0] + xdiv2f(rix[c][ -1] - rix[1][ -1] + rix[c][ 1] - rix[1][ 1]);
 			c = 2 - c;
-			rix[0][c] = rix[0][1]+ xdiv2f(rix[-w1][c] - rix[-w1][1] + rix[w1][c] - rix[w1][1]);
+			rix[c] = qix[c] + rr*cc1 + cc;
+			rix[c][0] = rix[1][0]+ xdiv2f(rix[c][-w1] - rix[1][-w1] + rix[c][w1] - rix[1][w1]);
 			c = 2 - c;
 		}
+
 #ifdef _OPENMP
 #pragma omp single
 #endif
@@ -1450,16 +1549,17 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 	if (plistener) plistener->setProgress (0.6);
 }
 
-
 	// interpolate R/B at B/R location
 #ifdef _OPENMP
 #pragma omp  for
 #endif
 	for (int rr=1; rr < rr1-1; rr++)
 		for (int cc=1+(FC(rr,1)&1), c=2-FC(rr,cc); cc < cc1-1; cc+=2) {
-			rix = qix + rr*cc1 + cc;
-			rix[0][c] = rix[0][1]+ x0250(rix[-w1][c] - rix[-w1][1] + rix[ -1][c] - rix[ -1][1]+ rix[  1][c] - rix[  1][1] + rix[ w1][c] - rix[ w1][1]);
+			rix[c] = qix[c] + rr*cc1 + cc;
+			rix[1] = qix[1] + rr*cc1 + cc;
+			rix[c][0] = rix[1][0]+ x0250(rix[c][-w1] - rix[1][-w1] + rix[c][ -1] - rix[1][ -1]+ rix[c][  1] - rix[1][  1] + rix[c][ w1] - rix[1][ w1]);
 		}
+
 #ifdef _OPENMP
 #pragma omp single
 #endif
@@ -1471,22 +1571,46 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 
 	// median filter/
 	for (int pass=0; pass < iter; pass++) {
-		for (int c=0; c < 3; c+=2) {
-			// Compute median(R-G) and median(B-G)
-			int d = c + 3;
-			for (int ii=0; ii < rr1*cc1; ii++) qix[ii][d] = qix[ii][c] - qix[ii][1];
-			// Apply 3x3 median filter
+		// Apply 3x3 median filter
+		// Compute median(R-G) and median(B-G)
+
 #ifdef _OPENMP
-#pragma omp parallel for  firstprivate (rix,qix)
+#pragma omp parallel for private(rix)
 #endif
-			for (int rr=1; rr < rr1-1; rr++)
-				for (int cc=1; cc < cc1-1; cc++) {
-					float temp;
-					rix = qix + rr*cc1 + cc;
+		for (int rr=1; rr < rr1-1; rr++) {
+			for (int c=0; c < 3; c+=2) {
+				int d = c + 3 - (c == 0 ? 0 : 1);
+				int cc=1;
+#ifdef __SSE2__
+				__m128 p1v,p2v,p3v,p4v,p5v,p6v,p7v,p8v,p9v,tempv;
+				for (; cc < cc1-4; cc+=4) {
+					rix[d] = qix[d] + rr*cc1 + cc;
+					rix[c] = qix[c] + rr*cc1 + cc;
+					rix[1] = qix[1] + rr*cc1 + cc;
 					// Assign 3x3 differential color values
-					float p1 = rix[-w1-1][d]; float p2 = rix[-w1][d]; float p3 = rix[-w1+1][d];
-					float p4 = rix[   -1][d]; float p5 = rix[  0][d]; float p6 = rix[    1][d];
-					float p7 = rix[ w1-1][d]; float p8 = rix[ w1][d]; float p9 = rix[ w1+1][d];
+					p1v = LVFU(rix[c][-w1-1])-LVFU(rix[1][-w1-1]); p2v = LVFU(rix[c][-w1])-LVFU(rix[1][-w1]); p3v = LVFU(rix[c][-w1+1])-LVFU(rix[1][-w1+1]);
+					p4v = LVFU(rix[c][   -1])-LVFU(rix[1][   -1]); p5v = LVFU(rix[c][  0])-LVFU(rix[1][  0]); p6v = LVFU(rix[c][    1])-LVFU(rix[1][    1]);
+					p7v = LVFU(rix[c][ w1-1])-LVFU(rix[1][ w1-1]); p8v = LVFU(rix[c][ w1])-LVFU(rix[1][ w1]); p9v = LVFU(rix[c][ w1+1])-LVFU(rix[1][ w1+1]);
+					// Sort for median of 9 values
+					PIX_SORTV(p2v,p3v); PIX_SORTV(p5v,p6v); PIX_SORTV(p8v,p9v);
+					PIX_SORTV(p1v,p2v); PIX_SORTV(p4v,p5v); PIX_SORTV(p7v,p8v);
+					PIX_SORTV(p2v,p3v); PIX_SORTV(p5v,p6v); PIX_SORTV(p8v,p9v);
+					p4v = _mm_max_ps(p1v,p4v); p6v = _mm_min_ps(p6v,p9v); PIX_SORTV(p5v,p8v);
+					p7v = _mm_max_ps(p4v,p7v); p5v = _mm_max_ps(p5v,p2v); p3v = _mm_min_ps(p3v,p6v);
+					p5v = _mm_min_ps(p5v,p8v); PIX_SORTV(p5v,p3v); p5v = _mm_max_ps(p7v,p5v);
+					p5v = _mm_min_ps(p3v,p5v);
+					_mm_storeu_ps(&rix[d][0], p5v);
+				}
+#endif
+				for (; cc < cc1-1; cc++) {
+					float temp;
+					rix[d] = qix[d] + rr*cc1 + cc;
+					rix[c] = qix[c] + rr*cc1 + cc;
+					rix[1] = qix[1] + rr*cc1 + cc;
+					// Assign 3x3 differential color values
+					float p1 = rix[c][-w1-1]-rix[1][-w1-1]; float p2 = rix[c][-w1]-rix[1][-w1]; float p3 = rix[c][-w1+1]-rix[1][-w1+1];
+					float p4 = rix[c][   -1]-rix[1][   -1]; float p5 = rix[c][  0]-rix[1][  0]; float p6 = rix[c][    1]-rix[1][    1];
+					float p7 = rix[c][ w1-1]-rix[1][ w1-1]; float p8 = rix[c][ w1]-rix[1][ w1]; float p9 = rix[c][ w1+1]-rix[1][ w1+1];
 					// Sort for median of 9 values
 					PIX_SORT(p2,p3); PIX_SORT(p5,p6); PIX_SORT(p8,p9);
 					PIX_SORT(p1,p2); PIX_SORT(p4,p5); PIX_SORT(p7,p8);
@@ -1495,71 +1619,101 @@ void RawImageSource::lmmse_interpolate_omp(int winw, int winh, int iterations)
 					PIX_SORT(p4,p7); PIX_SORT(p2,p5); PIX_SORT(p3,p6);
 					PIX_SORT(p5,p8); PIX_SORT(p5,p3); PIX_SORT(p7,p5);
 					PIX_SORT(p5,p3);
-					rix[0][4] = p5;
+					rix[d][0] = p5;
 				}
-			for (int ii=0; ii < rr1*cc1; ii++) qix[ii][d] = qix[ii][4];
+			}
 		}
-		// red/blue at GREEN pixel locations
-		for (int rr=0; rr < rr1; rr++)
-			for (int cc=(FC(rr,1)&1) /*, c=FC(rr,cc+1)*/; cc < cc1; cc+=2) {
-				rix = qix + rr*cc1 + cc;
-				rix[0][0] = rix[0][1] + rix[0][3];
-				rix[0][2] = rix[0][1] + rix[0][5];
+
+		// red/blue at GREEN pixel locations & red/blue and green at BLUE/RED pixel locations
+#ifdef _OPENMP
+#pragma omp parallel for private (rix)
+#endif
+		for (int rr=0; rr < rr1; rr++) {
+			rix[0] = qix[0] + rr*cc1;
+			rix[1] = qix[1] + rr*cc1;
+			rix[2] = qix[2] + rr*cc1;
+			rix[3] = qix[3] + rr*cc1;
+			rix[4] = qix[4] + rr*cc1;
+			int c0 = FC(rr,0);
+			int c1 = FC(rr,1);
+			if(c0 == 1){
+				c1 = 2 - c1;
+				int d = c1 + 3 - (c1 == 0 ? 0 : 1);
+				int cc;
+				for (cc=0; cc < cc1-1; cc+=2) {
+					rix[0][0] = rix[1][0] + rix[3][0];
+					rix[2][0] = rix[1][0] + rix[4][0];
+					rix[0]++; rix[1]++; rix[2]++; rix[3]++; rix[4]++;
+					rix[c1][0] = rix[1][0] + rix[d][0];
+					rix[1][0] = 0.5f * (rix[0][0] - rix[3][0] + rix[2][0] - rix[4][0]);
+					rix[0]++; rix[1]++; rix[2]++; rix[3]++; rix[4]++;
+				}
+				if(cc < cc1) { // remaining pixel, only if width is odd
+					rix[0][0] = rix[1][0] + rix[3][0];
+					rix[2][0] = rix[1][0] + rix[4][0];
+				}
+			} else {
+				c0 = 2 - c0;
+				int d = c0 + 3 - (c0 == 0 ? 0 : 1);
+				int cc;
+				for (cc=0; cc < cc1-1; cc+=2) {
+					rix[c0][0] = rix[1][0] + rix[d][0];
+					rix[1][0] = 0.5f * (rix[0][0] - rix[3][0] + rix[2][0] - rix[4][0]);
+					rix[0]++; rix[1]++; rix[2]++; rix[3]++; rix[4]++;
+					rix[0][0] = rix[1][0] + rix[3][0];
+					rix[2][0] = rix[1][0] + rix[4][0];
+					rix[0]++; rix[1]++; rix[2]++; rix[3]++; rix[4]++;
+				}
+				if(cc < cc1) { // remaining pixel, only if width is odd
+					rix[c0][0] = rix[1][0] + rix[d][0];
+					rix[1][0] = 0.5f * (rix[0][0] - rix[3][0] + rix[2][0] - rix[4][0]);
+				}
 			}
-		// red/blue and green at BLUE/RED pixel locations
-		for (int rr=0; rr < rr1; rr++)
-			for (int cc=(FC(rr,0)&1), c=2-FC(rr,cc),d=c+3; cc < cc1; cc+=2) {
-				rix = qix + rr*cc1 + cc;
-				rix[0][c] = rix[0][1] + rix[0][d];
-				rix[0][1] = xdiv2f(rix[0][0] - rix[0][3] + rix[0][2] - rix[0][5]);
-			}
+		}
 	}
 
 	if (plistener) plistener->setProgress (0.8);
-#ifdef _OPENMP
-#pragma omp parallel firstprivate (image,rix,qix)
-#endif
-{
+
+	if(applyGamma)
+		gamtab = &(Color::igammatab_24_17);
+	else {
+		for(int i=0;i<65536;i++)
+			(*gamtab)[i] = (float)i + 0.5f;
+	}
+
+	array2D<float> (*rgb[3]);
+	rgb[0] = &red;
+	rgb[1] = &green;
+	rgb[2] = &blue;
+
 	// copy result back to image matrix
 #ifdef _OPENMP
-#pragma omp for
+#pragma omp parallel for
 #endif
-	for (int row=0; row < height; row++)
+	for (int row=0; row < height; row++) {
 		for (int col=0, rr=row+ba; col < width; col++) {
 			int cc = col+ba;
-			rix = qix + rr*cc1 + cc;
 			int c = FC(row,col);
-			float v0;
-
-			if (applyGamma) {
-				for (int ii=0; ii < 3; ii++)
-					if (ii != c) {
-						v0 = 65535.f*rix[0][ii];
-						image[row*width+col][ii]=Color::igammatab_24_17[v0];
-					}
-			}
-			else
-				for (int ii=0; ii < 3; ii++)
-					if (ii != c)
-						image[row*width+col][ii] = ((65535.0f*rix[0][ii] + 0.5f));
-		}
-#ifdef _OPENMP
-#pragma omp for
-#endif
-	for (int ii=0; ii<height; ii++) {
-		for (int jj=0; jj<width; jj++){
-			red[ii][jj]   = (image[ii*width+jj][0]);
-			green[ii][jj] = (image[ii*width+jj][1]);
-			blue[ii][jj]  = (image[ii*width+jj][2]);
+			for (int ii=0; ii < 3; ii++)
+				if (ii != c) {
+					float *rix = qix[ii] + rr*cc1 + cc;
+					(*(rgb[ii]))[row][col] = (*gamtab)[65535.f*rix[0]];
+				} else {
+					(*(rgb[ii]))[row][col] = CLIP(rawData[row][col]);
+				}
 		}
 	}
-}
-// End of parallelization 2
 
 	if (plistener) plistener->setProgress (1.0);
-	free(buffer);
-	free(image);
-	//if(iterations > 4) refinement_lassus(passref);
+	if(buffer)
+		free(buffer);
+	else
+		for(int i=0;i<5;i++)
+			free(qix[i]);
+
+	if(!applyGamma)
+		delete gamtab;
+
 	if(iterations > 4 && iterations <=6) refinement(passref);
 	else if(iterations > 6) refinement_lassus(passref);
 
@@ -2384,108 +2538,163 @@ void RawImageSource::nodemosaic(bool bw)
    Adapted for Rawtherapee - Jacques Desmis 04/2013
 */
 
-void RawImageSource::refinement(int PassCount)
+#ifdef __SSE2__
+#define CLIPV(a) LIMV(a,ZEROV,c65535v)
+#endif
+SSEFUNCTION void RawImageSource::refinement(int PassCount)
 {
 	MyTime t1e,t2e;
     t1e.set();
-    float (*image)[3];
+
 	int width=W;
 	int height=H;
 	int w1 = width;
 	int w2 = 2*w1;
+	if (plistener) {
+		plistener->setProgressStr (M("TP_RAW_DMETHOD_PROGRESSBAR_REFINE"));
+	}
 
-    image = (float(*)[3]) calloc(W*H, sizeof *image);
+	array2D<float> *rgb[3];
+	rgb[0] = &red;
+	rgb[1] = &green;
+	rgb[2] = &blue;
+
+	for (int b=0; b<PassCount; b++) {
+		if (plistener) {
+			plistener->setProgress ((float)b/PassCount);
+		}
+
+
 #ifdef _OPENMP
-#pragma omp parallel shared(image)
+#pragma omp parallel
 #endif
-    {
+{
+		float *pix[3];
+
+ /* Reinforce interpolated green pixels on RED/BLUE pixel locations */
 #ifdef _OPENMP
 #pragma omp for
 #endif
-	   for (int i=0;i<H;i++) {
-            for (int j=0;j<W;j++) {
-                image[i*W+j][0] = red  [i][j];
-                image[i*W+j][1] = green[i][j];
-                image[i*W+j][2] = blue [i][j];
-            }
-        }
-        for (int b=0; b<PassCount; b++) {
-            if (plistener) {
-                plistener->setProgressStr (M("TP_RAW_DMETHOD_PROGRESSBAR_REFINE"));
-                plistener->setProgress ((float)b/PassCount);
-            }
-
-  /* Reinforce interpolated green pixels on RED/BLUE pixel locations */
- #ifdef _OPENMP
-#pragma omp for
+		for (int row=2; row < height-2; row++) {
+			int col = 2+(FC(row,2) & 1);
+			int c = FC(row,col);
+#ifdef __SSE2__
+			__m128 dLv, dRv, dUv, dDv, v0v;
+			__m128 onev = _mm_set1_ps(1.f);
+			__m128 zd5v = _mm_set1_ps(0.5f);
+			__m128 c65535v = _mm_set1_ps(65535.f);
+			for (; col < width-8; col+=8) {
+				int indx = row*width+col;
+				pix[c] = (float*)(*rgb[c]) + indx;
+				pix[1] = (float*)(*rgb[1]) + indx;
+				dLv = onev/(onev+vabsf(LC2VFU(pix[c][ -2])-LC2VFU(pix[c][0]))+vabsf(LC2VFU(pix[1][ 1])-LC2VFU(pix[1][ -1])));
+				dRv = onev/(onev+vabsf(LC2VFU(pix[c][  2])-LC2VFU(pix[c][0]))+vabsf(LC2VFU(pix[1][ 1])-LC2VFU(pix[1][ -1])));
+				dUv = onev/(onev+vabsf(LC2VFU(pix[c][-w2])-LC2VFU(pix[c][0]))+vabsf(LC2VFU(pix[1][w1])-LC2VFU(pix[1][-w1])));
+				dDv = onev/(onev+vabsf(LC2VFU(pix[c][ w2])-LC2VFU(pix[c][0]))+vabsf(LC2VFU(pix[1][w1])-LC2VFU(pix[1][-w1])));
+				v0v = CLIPV(LC2VFU(pix[c][0]) + zd5v +((LC2VFU(pix[1][-1])-LC2VFU(pix[c][-1]))*dLv +(LC2VFU(pix[1][1])-LC2VFU(pix[c][1]))*dRv +(LC2VFU(pix[1][-w1])-LC2VFU(pix[c][-w1]))*dUv + (LC2VFU(pix[1][w1])-LC2VFU(pix[c][w1]))*dDv ) / (dLv+dRv+dUv+dDv));
+				STC2VFU(pix[1][0],v0v);
+			}
 #endif
-  for (int row=2; row < height-2; row++)
-    for (int col=2+(FC(row,2) & 1), c=FC(row,col); col < width-2; col+=2) {
-      int indx = row*width+col;
-      float (*pix)[3]= image + indx;
-      double dL = 1.0/(1.0+fabs(pix[ -2][c]-pix[0][c])+fabs(pix[ 1][1]-pix[ -1][1]));
-      double dR = 1.0/(1.0+fabs(pix[  2][c]-pix[0][c])+fabs(pix[ 1][1]-pix[ -1][1]));
-      double dU = 1.0/(1.0+fabs(pix[-w2][c]-pix[0][c])+fabs(pix[w1][1]-pix[-w1][1]));
-      double dD = 1.0/(1.0+fabs(pix[ w2][c]-pix[0][c])+fabs(pix[w1][1]-pix[-w1][1]));
-      float v0 = (float)((double)pix[0][c] + 0.5 +((double)(pix[ -1][1]-pix[ -1][c])*dL +(double)(pix[  1][1]-pix[  1][c])*dR +(double)(pix[-w1][1]-pix[-w1][c])*dU +
-		  (double)(pix[ w1][1]-pix[ w1][c])*dD ) / (dL+dR+dU+dD));
-      pix[0][1] = CLIP(v0);
-    }
-
+			for (; col < width-2; col+=2) {
+				int indx = row*width+col;
+				pix[c] = (float*)(*rgb[c]) + indx;
+				pix[1] = (float*)(*rgb[1]) + indx;
+				float dL = 1.f/(1.f+fabsf(pix[c][ -2]-pix[c][0])+fabsf(pix[1][ 1]-pix[1][ -1]));
+				float dR = 1.f/(1.f+fabsf(pix[c][  2]-pix[c][0])+fabsf(pix[1][ 1]-pix[1][ -1]));
+				float dU = 1.f/(1.f+fabsf(pix[c][-w2]-pix[c][0])+fabsf(pix[1][w1]-pix[1][-w1]));
+				float dD = 1.f/(1.f+fabsf(pix[c][ w2]-pix[c][0])+fabsf(pix[1][w1]-pix[1][-w1]));
+				float v0 = (pix[c][0] + 0.5f +((pix[1][ -1]-pix[c][ -1])*dL +(pix[1][  1]-pix[c][  1])*dR +(pix[1][-w1]-pix[c][-w1])*dU + (pix[1][ w1]-pix[c][ w1])*dD ) / (dL+dR+dU+dD));
+				pix[1][0] = CLIP(v0);
+			}
+		}
   /* Reinforce interpolated red/blue pixels on GREEN pixel locations */
 #ifdef _OPENMP
 #pragma omp for
 #endif
-  for (int row=2; row < height-2; row++)
-    for (int col=2+(FC(row,3) & 1), c=FC(row,col+1); col < width-2; col+=2) {
-      int indx = row*width+col;
-      float (*pix)[3] = image + indx;
-      for (int i=0; i < 2; c=2-c, i++) {
-	double dL = 1.0/(1.0+fabs(pix[ -2][1]-pix[0][1])+fabs(pix[ 1][c]-pix[ -1][c]));
-	double dR = 1.0/(1.0+fabs(pix[  2][1]-pix[0][1])+fabs(pix[ 1][c]-pix[ -1][c]));
-	double dU = 1.0/(1.0+fabs(pix[-w2][1]-pix[0][1])+fabs(pix[w1][c]-pix[-w1][c]));
-	double dD = 1.0/(1.0+fabs(pix[ w2][1]-pix[0][1])+fabs(pix[w1][c]-pix[-w1][c]));
-	float v0 = (float)((double)pix[0][1] + 0.5 -((double)(pix[ -1][1]-pix[ -1][c])*dL + (double)(pix[  1][1]-pix[  1][c])*dR +(double)(pix[-w1][1]-pix[-w1][c])*dU +
-		    (double)(pix[ w1][1]-pix[ w1][c])*dD ) / (dL+dR+dU+dD));
-	pix[0][c] = CLIP(v0);
-      }
-	  }
-
-
-  /* Reinforce integrated red/blue pixels on BLUE/RED pixel locations */
-#ifdef _OPENMP
-#pragma omp for
+		for (int row=2; row < height-2; row++) {
+			int col = 2+(FC(row,3) & 1);
+			int c = FC(row,col+1);
+#ifdef __SSE2__
+			__m128 dLv, dRv, dUv, dDv, v0v;
+			__m128 onev = _mm_set1_ps(1.f);
+			__m128 zd5v = _mm_set1_ps(0.5f);
+			__m128 c65535v = _mm_set1_ps(65535.f);
+			for (; col < width-8; col+=8) {
+				int indx = row*width+col;
+				pix[1] = (float*)(*rgb[1]) + indx;
+				for (int i=0; i < 2; c=2-c, i++) {
+					pix[c] = (float*)(*rgb[c]) + indx;
+					dLv = onev/(onev+vabsf(LC2VFU(pix[1][ -2])-LC2VFU(pix[1][0]))+vabsf(LC2VFU(pix[c][ 1])-LC2VFU(pix[c][ -1])));
+					dRv = onev/(onev+vabsf(LC2VFU(pix[1][  2])-LC2VFU(pix[1][0]))+vabsf(LC2VFU(pix[c][ 1])-LC2VFU(pix[c][ -1])));
+					dUv = onev/(onev+vabsf(LC2VFU(pix[1][-w2])-LC2VFU(pix[1][0]))+vabsf(LC2VFU(pix[c][w1])-LC2VFU(pix[c][-w1])));
+					dDv = onev/(onev+vabsf(LC2VFU(pix[1][ w2])-LC2VFU(pix[1][0]))+vabsf(LC2VFU(pix[c][w1])-LC2VFU(pix[c][-w1])));
+					v0v = CLIPV(LC2VFU(pix[1][0]) + zd5v -((LC2VFU(pix[1][-1])-LC2VFU(pix[c][-1]))*dLv + (LC2VFU(pix[1][1])-LC2VFU(pix[c][1]))*dRv +(LC2VFU(pix[1][-w1])-LC2VFU(pix[c][-w1]))*dUv + (LC2VFU(pix[1][w1])-LC2VFU(pix[c][w1]))*dDv ) / (dLv+dRv+dUv+dDv));
+					STC2VFU(pix[c][0],v0v);
+				}
+			}
 #endif
-  for (int row=2; row < height-2; row++)
-    for (int col=2+(FC(row,2) & 1), c=2-FC(row,col); col < width-2; col+=2) {
-      int indx = row*width+col;
-      float (*pix)[3] = image + indx;
-      int d = 2 - c;
-      double dL = 1.0/(1.0+ABS(pix[ -2][d]-pix[0][d])+ABS(pix[ 1][1]-pix[ -1][1]));
-      double dR = 1.0/(1.0+ABS(pix[  2][d]-pix[0][d])+ABS(pix[ 1][1]-pix[ -1][1]));
-      double dU = 1.0/(1.0+ABS(pix[-w2][d]-pix[0][d])+ABS(pix[w1][1]-pix[-w1][1]));
-      double dD = 1.0/(1.0+ABS(pix[ w2][d]-pix[0][d])+ABS(pix[w1][1]-pix[-w1][1]));
-      float v0 = (float)((double)pix[0][1] + 0.5 -((double)(pix[ -1][1]-pix[ -1][c])*dL +(double)(pix[  1][1]-pix[  1][c])*dR +(double)(pix[-w1][1]-pix[-w1][c])*dU +
-		  (double)(pix[ w1][1]-pix[ w1][c])*dD ) / (dL+dR+dU+dD));
-      pix[0][c] = CLIP(v0);
-    }
-}
-
-#ifdef _OPENMP
-#pragma omp for
-#endif
-        for (int i=0;i<H;i++) {
-            for (int j=0; j<W; j++) {
-                red  [i][j] =image[i*W+j][0];
-                green[i][j] =image[i*W+j][1];
-                blue [i][j] =image[i*W+j][2];
-            }
+			for (; col < width-2; col+=2) {
+				int indx = row*width+col;
+				pix[1] = (float*)(*rgb[1]) + indx;
+				for (int i=0; i < 2; c=2-c, i++) {
+					pix[c] = (float*)(*rgb[c]) + indx;
+					float dL = 1.f/(1.f+fabsf(pix[1][ -2]-pix[1][0])+fabsf(pix[c][ 1]-pix[c][ -1]));
+					float dR = 1.f/(1.f+fabsf(pix[1][  2]-pix[1][0])+fabsf(pix[c][ 1]-pix[c][ -1]));
+					float dU = 1.f/(1.f+fabsf(pix[1][-w2]-pix[1][0])+fabsf(pix[c][w1]-pix[c][-w1]));
+					float dD = 1.f/(1.f+fabsf(pix[1][ w2]-pix[1][0])+fabsf(pix[c][w1]-pix[c][-w1]));
+					float v0 = (pix[1][0] + 0.5f -((pix[1][ -1]-pix[c][ -1])*dL + (pix[1][  1]-pix[c][  1])*dR +(pix[1][-w1]-pix[c][-w1])*dU + (pix[1][ w1]-pix[c][ w1])*dD ) / (dL+dR+dU+dD));
+					pix[c][0] = CLIP(v0);
+				}
+			}
 		}
+ /* Reinforce integrated red/blue pixels on BLUE/RED pixel locations */
+#ifdef _OPENMP
+#pragma omp for
+#endif
+		for (int row=2; row < height-2; row++) {
+			int col = 2+(FC(row,2) & 1);
+			int c = 2-FC(row,col);
+#ifdef __SSE2__
+			__m128 dLv, dRv, dUv, dDv, v0v;
+			__m128 onev = _mm_set1_ps(1.f);
+			__m128 zd5v = _mm_set1_ps(0.5f);
+			__m128 c65535v = _mm_set1_ps(65535.f);
+			for (; col < width-8; col+=8) {
+				int indx = row*width+col;
+				pix[0] = (float*)(*rgb[0]) + indx;
+				pix[1] = (float*)(*rgb[1]) + indx;
+				pix[2] = (float*)(*rgb[2]) + indx;
+				int d = 2 - c;
+				dLv = onev/(onev+vabsf(LC2VFU(pix[d][ -2])-LC2VFU(pix[d][0]))+vabsf(LC2VFU(pix[1][ 1])-LC2VFU(pix[1][ -1])));
+				dRv = onev/(onev+vabsf(LC2VFU(pix[d][  2])-LC2VFU(pix[d][0]))+vabsf(LC2VFU(pix[1][ 1])-LC2VFU(pix[1][ -1])));
+				dUv = onev/(onev+vabsf(LC2VFU(pix[d][-w2])-LC2VFU(pix[d][0]))+vabsf(LC2VFU(pix[1][w1])-LC2VFU(pix[1][-w1])));
+				dDv = onev/(onev+vabsf(LC2VFU(pix[d][ w2])-LC2VFU(pix[d][0]))+vabsf(LC2VFU(pix[1][w1])-LC2VFU(pix[1][-w1])));
+				v0v = CLIPV(LC2VFU(pix[1][0]) + zd5v -((LC2VFU(pix[1][-1])-LC2VFU(pix[c][-1]))*dLv +(LC2VFU(pix[1][1])-LC2VFU(pix[c][1]))*dRv +(LC2VFU(pix[1][-w1])-LC2VFU(pix[c][-w1]))*dUv + (LC2VFU(pix[1][w1])-LC2VFU(pix[c][w1]))*dDv ) / (dLv+dRv+dUv+dDv));
+				STC2VFU(pix[c][0],v0v);
+			}
+#endif
+			for (; col < width-2; col+=2) {
+				int indx = row*width+col;
+				pix[0] = (float*)(*rgb[0]) + indx;
+				pix[1] = (float*)(*rgb[1]) + indx;
+				pix[2] = (float*)(*rgb[2]) + indx;
+				int d = 2 - c;
+				float dL = 1.f/(1.f+fabsf(pix[d][ -2]-pix[d][0])+fabsf(pix[1][ 1]-pix[1][ -1]));
+				float dR = 1.f/(1.f+fabsf(pix[d][  2]-pix[d][0])+fabsf(pix[1][ 1]-pix[1][ -1]));
+				float dU = 1.f/(1.f+fabsf(pix[d][-w2]-pix[d][0])+fabsf(pix[1][w1]-pix[1][-w1]));
+				float dD = 1.f/(1.f+fabsf(pix[d][ w2]-pix[d][0])+fabsf(pix[1][w1]-pix[1][-w1]));
+				float v0 = (pix[1][0] + 0.5f -((pix[1][ -1]-pix[c][ -1])*dL +(pix[1][  1]-pix[c][  1])*dR +(pix[1][-w1]-pix[c][-w1])*dU + (pix[1][ w1]-pix[c][ w1])*dD ) / (dL+dR+dU+dD));
+				pix[c][0] = CLIP(v0);
+			}
+		}
+} // end parallel
 	}
-    free(image);
     t2e.set();
     if (settings->verbose) printf("Refinement Lee %d usec\n", t2e.etime(t1e));
 }
+#ifdef __SSE2__
+#undef CLIPV
+#endif
 
 
 // Refinement based on EECI demozaicing algorithm by L. Chang and Y.P. Tan
@@ -2690,6 +2899,8 @@ inline void RawImageSource::dcb_initTileLimits(int &colMin, int &rowMin, int &co
 	if(!x0 ) colMin = TILEBORDER+border;
 	if( y0+TILESIZE+TILEBORDER >= H-border) rowMax = TILEBORDER+H-border-y0;
 	if( x0+TILESIZE+TILEBORDER >= W-border) colMax = TILEBORDER+W-border-x0;
+	if( y0 + rowMax >= H) rowMax = H - y0;
+	if( x0 + colMax >= W) colMax = W - x0;
 }
 
 void RawImageSource::fill_raw( float (*cache )[4], int x0, int y0, float** rawData)
@@ -3537,20 +3748,25 @@ void RawImageSource::xtrans_interpolate (int passes, bool useCieLab)
 					}
 
 /* Interpolate red for blue pixels and vice versa:		*/
-				for (int row=top+1; row < mrow-1; row++) {
-					i = (row-sgrow) % 3 ? TS:1;
-					int leftstart = left+1;
+				for (int row=top+3; row < mrow-3; row++) {
+					int leftstart = left+3;
 					for(;leftstart<mcol-1;leftstart++)
 						if(fcol(row,leftstart)!=1)
 							break;
 					const int coloffset = (RightShift[(row)%6] == 1 ? 3:1);
-					for (int col=leftstart; col < mcol-1; col+=coloffset) {
+					c = (row-sgrow) % 3 ? TS:1;
+					h = 3 * (c ^ TS ^ 1);
+					for (int col=leftstart; col < mcol-3; col+=coloffset) {
 						if ((f = 2-fcol(row,col)) == 1)
 							continue;
 						rix = &rgb[0][row-top][col-left];
-						for (d=0; d < 4; d++, rix += TS*TS)
+						for (d=0; d < 4; d++, rix += TS*TS) {
+							i = d > 1 || ((d ^ c) & 1) ||
+								((fabsf(rix[0][1]-rix[c][1])+fabsf(rix[0][1]-rix[-c][1])) <	2.f*(fabsf(rix[0][1]-rix[h][1])+fabsf(rix[0][1]-rix[-h][1]))) ? c:h;
+
 							rix[0][f] = CLIP(0.5f*(rix[i][f] + rix[-i][f] +
 										rix[0][1] + rix[0][1] - rix[i][1] - rix[-i][1]));
+						}
 					}
 				}
 

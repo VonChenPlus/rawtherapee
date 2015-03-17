@@ -381,8 +381,9 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y) {
             rot_deg = 0;
         }
         else if (iarea->getToolMode () == TMSpotWB) {
-            screenCoordToImage (x, y, action_x, action_y);
-            iarea->spotWBSelected (action_x, action_y);
+			int spotx, spoty;
+			screenCoordToImage (x, y, spotx, spoty);
+			iarea->spotWBSelected (spotx, spoty);
         }
         else if (iarea->getToolMode () == TMCropSelect && cropgl) {
             state = SCropSelecting;
@@ -1302,7 +1303,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr) {
             if (cropHandler.cropParams.enabled) {
                 int cropX, cropY;
                 cropHandler.getPosition (cropX, cropY);
-                drawCrop (cr, x+imgX, y+imgY, imgW, imgH, cropX, cropY, zoomSteps[cropZoom].zoom, cropHandler.cropParams,(this == iarea->mainCropWindow));
+                drawCrop (cr, x+imgX, y+imgY, imgW, imgH, cropX, cropY, zoomSteps[cropZoom].zoom, cropHandler.cropParams,(this == iarea->mainCropWindow), true, zoomSteps[cropZoom].zoom <= cropHandler.getFitZoom() );
             }
             if (observedCropWin)
                 drawObservedFrame (cr);
@@ -1407,7 +1408,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr) {
             if (rough) {
                 iarea->get_window()->draw_pixbuf (iarea->get_style()->get_base_gc(Gtk::STATE_NORMAL), rough, 0, 0, x+imgAreaX+(imgAreaW-rough->get_width())/2, y+imgAreaY+(imgAreaH-rough->get_height())/2, -1, -1, Gdk::RGB_DITHER_NORMAL, 0, 0);  
                 if (cropHandler.cropParams.enabled) {
-                    drawCrop (cr, x+imgAreaX+(imgAreaW-rough->get_width())/2, y+imgAreaY+(imgAreaH-rough->get_height())/2, rough->get_width(), rough->get_height(), cropX, cropY, zoomSteps[cropZoom].zoom, cropHandler.cropParams, (this == iarea->mainCropWindow));
+                    drawCrop (cr, x+imgAreaX+(imgAreaW-rough->get_width())/2, y+imgAreaY+(imgAreaH-rough->get_height())/2, rough->get_width(), rough->get_height(), cropX, cropY, zoomSteps[cropZoom].zoom, cropHandler.cropParams, (this == iarea->mainCropWindow), true, zoomSteps[cropZoom].zoom <= cropHandler.getFitZoom());
                 }
                 if (observedCropWin)
                     drawObservedFrame (cr, rough->get_width(), rough->get_height());
@@ -1575,6 +1576,27 @@ void CropWindow::zoomFit () {
     fitZoom = true;
 }
 
+void CropWindow::zoomFitCrop () {
+    if(cropHandler.cropParams.enabled) {
+		double z = cropHandler.getFitCropZoom ();
+		int cz = MAXZOOMSTEPS;
+		if (z < zoomSteps[0].zoom)
+			cz = 0;
+		else 
+			for (int i=0; i<MAXZOOMSTEPS; i++)
+				if (zoomSteps[i].zoom <= z && zoomSteps[i+1].zoom > z) {
+					cz = i;
+					break;
+				}
+		zoomVersion = exposeVersion;
+		int centerX,centerY;
+		centerX = cropHandler.cropParams.x + cropHandler.cropParams.w / 2;
+		centerY = cropHandler.cropParams.y + cropHandler.cropParams.h / 2;
+		changeZoom (cz, true, centerX, centerY, false);
+		fitZoom = false;
+	}
+}
+
 void CropWindow::buttonPressed (LWButton* button, int actionCode, void* actionData) {
 
     if (button==bZoomIn) // zoom in
@@ -1597,14 +1619,14 @@ void CropWindow::redrawNeeded (LWButton* button) {
     iarea->redraw ();
 }
 
-void CropWindow::changeZoom  (int zoom, bool notify, int centerx, int centery) {
+void CropWindow::changeZoom  (int zoom, bool notify, int centerx, int centery, bool skipZoomIfUnchanged) {
 
     if (zoom<0)
         zoom = 0;
     else if (zoom>MAXZOOMSTEPS)
         zoom = MAXZOOMSTEPS;
 
-    if (cropZoom == zoom) {
+    if (cropZoom == zoom && skipZoomIfUnchanged) {
     	// We are already at the start/end of the zoom range, so we do nothing
     	return;
     }

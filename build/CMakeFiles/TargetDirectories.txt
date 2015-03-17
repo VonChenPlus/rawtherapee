@@ -1,0 +1,4 @@
+/home/ASP2/rawtherapee/build/CMakeFiles/AboutFile.dir
+/home/ASP2/rawtherapee/build/rtengine/CMakeFiles/rtengine.dir
+/home/ASP2/rawtherapee/build/rtexif/CMakeFiles/rtexif.dir
+/home/ASP2/rawtherapee/build/rtgui/CMakeFiles/rth.dir

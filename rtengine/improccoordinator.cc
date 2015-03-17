@@ -136,8 +136,12 @@ void ImProcCoordinator::updatePreviewImage (int todo, Crop* cropCall) {
     // Tells to the ImProcFunctions' tools what is the preview scale, which may lead to some simplifications
     ipf.setScale (scale);
 
+    bool highDetailNeeded = false;
+
+    if (options.prevdemo==PD_Sidecar) highDetailNeeded = true; //i#2664
+    else highDetailNeeded = (todo & M_HIGHQUAL);
+
     // Check if any detail crops need high detail. If not, take a fast path short cut
-    bool highDetailNeeded = (todo & M_HIGHQUAL);
     if (!highDetailNeeded) {
         for (size_t i=0; i<crops.size(); i++)
             if (crops[i]->get_skip() == 1 ) {  // skip=1 -> full resolution
@@ -158,9 +162,7 @@ void ImProcCoordinator::updatePreviewImage (int todo, Crop* cropCall) {
 
         rp.bayersensor.ccSteps = 0;
         rp.xtranssensor.ccSteps = 0;
-        /* Commented out the following line so that the hot pixel filter works at <100% zoom levels too, to fix issue 2535.
-         * rp.deadPixelFilter = rp.hotPixelFilter = false;
-         */
+        //rp.deadPixelFilter = rp.hotPixelFilter = false;
     }
 
     progress ("Applying white balance, color correction & sRGB conversion...",100*readyphase/numofphases);
@@ -990,6 +992,23 @@ void ImProcCoordinator::saveInputICCReference (const Glib::ustring& fname) {
 	params.wb.green = currWB.getGreen ();
 	imgsrc->getImage (currWB, 0, im, pp, ppar.toneCurve, ppar.icm, ppar.raw);
 	imgsrc->convertColorSpace(im, ppar.icm, currWB, params.raw);
+        if (params.crop.enabled) {
+            Imagefloat *tmpim = new Imagefloat (params.crop.w, params.crop.h);
+            int cx = params.crop.x;
+            int cy = params.crop.y;
+            int cw = params.crop.w;
+            int ch = params.crop.h;
+#pragma omp parallel for
+            for (int i=cy; i<cy+ch; i++) {
+                for (int j=cx; j<cx+cw; j++) {
+                    tmpim->r(i-cy, j-cx) = im->r(i, j);
+                    tmpim->g(i-cy, j-cx) = im->g(i, j);
+                    tmpim->b(i-cy, j-cx) = im->b(i, j);
+                }
+            }
+            delete im;
+            im = tmpim;
+        }
 	Image16* im16 = im->to16();
 	delete im;
 	im16->saveTIFF (fname,16,true);

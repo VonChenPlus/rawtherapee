@@ -122,14 +122,15 @@ std::vector<Glib::RefPtr<Gdk::Pixbuf> > FileBrowserEntry::getIconsOnImageArea ()
 }
 
 void FileBrowserEntry::customBackBufferUpdate (Cairo::RefPtr<Cairo::Context> c) {
-    
-    if (state==SCropSelecting || state==SResizeH1 || state==SResizeH2 || state==SResizeW1 || state==SResizeW2 || state==SResizeTL || state==SResizeTR || state==SResizeBL || state==SResizeBR || state==SCropMove)
-        drawCrop (c, prex, prey, prew, preh, 0, 0, scale, cropParams);
-    else {
-        rtengine::procparams::CropParams cparams = thumbnail->getProcParams().crop;
-        if (cparams.enabled && !thumbnail->isQuick())  // Quick thumb have arbitrary sizes, so don't apply the crop
-            drawCrop (c, prex, prey, prew, preh, 0, 0, scale, cparams);
-    }
+	if(scale != 1.0 && cropParams.enabled) { // somewhere in pipeline customBackBufferUpdate is called when scale == 1.0, which is nonsense for a thumb
+		if (state==SCropSelecting || state==SResizeH1 || state==SResizeH2 || state==SResizeW1 || state==SResizeW2 || state==SResizeTL || state==SResizeTR || state==SResizeBL || state==SResizeBR || state==SCropMove)
+			drawCrop (c, prex, prey, prew, preh, 0, 0, scale, cropParams, true, false);
+		else {
+			rtengine::procparams::CropParams cparams = thumbnail->getProcParams().crop;
+			if (cparams.enabled && !thumbnail->isQuick())  // Quick thumb have arbitrary sizes, so don't apply the crop
+				drawCrop (c, prex, prey, prew, preh, 0, 0, scale, cparams, true, false);
+		}
+	}
 }
 
 void FileBrowserEntry::getIconSize (int& w, int& h) {
@@ -206,7 +207,7 @@ void FileBrowserEntry::updateImage (rtengine::IImage8* img, double scale, rtengi
     param->img = img;
     param->scale = scale;
     param->cropParams = cropParams;
-#if __GNUC__ == 4 && __GNUC_MINOR__ >= 8 && defined( WIN32 ) && defined(__x86_64__)
+#if __GNUC__ == 4 && __GNUC_MINOR__ == 8 && defined( WIN32 ) && defined(__x86_64__)
     g_idle_add_full (G_PRIORITY_DEFAULT, updateImageUI, param, NULL);
 #else
     g_idle_add_full (G_PRIORITY_LOW, updateImageUI, param, NULL);

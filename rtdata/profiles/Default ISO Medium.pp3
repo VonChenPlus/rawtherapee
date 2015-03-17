@@ -1,6 +1,6 @@
 [Version]
-AppVersion=4.2.1
-Version=321
+AppVersion=4.2.84
+Version=322
 
 [Exposure]
 Auto=true
@@ -116,6 +116,9 @@ VCurve=0;
 [Film Simulation]
 Enabled=false
 
+[Wavelet]
+Enabled=false
+
 [RGB Curves]
 LumaMode=false
 rCurve=0;
@@ -146,7 +149,7 @@ PreTwoGreen=true
 LineDenoise=0
 GreenEqThreshold=0
 DCBIterations=2
-DCBEnhance=false
+DCBEnhance=true
 LMMSEIterations=2
 
 [RAW X-Trans]

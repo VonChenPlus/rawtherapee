@@ -9,16 +9,16 @@
 using namespace rtengine;
 using namespace rtengine::procparams;
 
-Gradient::Gradient () : FoldableToolPanel(this), EditSubscriber(ET_OBJECTS), lastObject(-1), draggedPointOldAngle(-1000.)
+Gradient::Gradient () : FoldableToolPanel(this, "gradient", M("TP_GRADIENT_LABEL"), false, true), EditSubscriber(ET_OBJECTS), lastObject(-1), draggedPointOldAngle(-1000.)
 {
-	enabled = Gtk::manage (new Gtk::CheckButton (M("GENERAL_ENABLED")));
-	enabled->set_active (false);
-	enaConn  = enabled->signal_toggled().connect( sigc::mem_fun(*this, &Gradient::enabledChanged) );
 
+	editHBox = Gtk::manage (new Gtk::HBox());
 	edit = Gtk::manage (new Gtk::ToggleButton());
 	edit->add (*Gtk::manage (new RTImage ("editmodehand.png")));
 	edit->set_tooltip_text(M("EDIT_OBJECT_TOOLTIP"));
 	editConn = edit->signal_toggled().connect( sigc::mem_fun(*this, &Gradient::editToggled) );
+	editHBox->pack_start(*edit, Gtk::PACK_SHRINK, 0);
+	pack_start (*editHBox, Gtk::PACK_SHRINK, 0);
 
 	strength = Gtk::manage (new Adjuster (M("TP_GRADIENT_STRENGTH"), -5, 5, 0.01, 0));
 	strength->set_tooltip_text (M("TP_GRADIENT_STRENGTH_TOOLTIP"));
@@ -40,16 +40,11 @@ Gradient::Gradient () : FoldableToolPanel(this), EditSubscriber(ET_OBJECTS), las
 	centerY->set_tooltip_text (M("TP_GRADIENT_CENTER_Y_TOOLTIP"));
 	centerY->setAdjusterListener (this);
 
-	enaBox = Gtk::manage (new Gtk::HBox());
-	enaBox->pack_start(*enabled);
-	enaBox->pack_end(*edit, false, false, 0);
-	pack_start(*enaBox);
-	pack_start(*Gtk::manage (new  Gtk::HSeparator()), Gtk::PACK_EXPAND_WIDGET, 4);
-	pack_start (*strength);
-	pack_start (*degree);
-	pack_start (*feather);
-	pack_start (*centerX);
-	pack_start (*centerY);
+	pack_start (*strength, Gtk::PACK_SHRINK, 0);
+	pack_start (*degree, Gtk::PACK_SHRINK, 0);
+	pack_start (*feather, Gtk::PACK_SHRINK, 0);
+	pack_start (*centerX, Gtk::PACK_SHRINK, 0);
+	pack_start (*centerY, Gtk::PACK_SHRINK, 0);
 
 	// Instantiating the Editing geometry; positions will be initialized later
 	Line *hLine, *vLine, *featherLine[2];
@@ -119,19 +114,15 @@ void Gradient::read (const ProcParams* pp, const ParamsEdited* pedited)
 		strength->setEditedState (pedited->gradient.strength ? Edited : UnEdited);
 		centerX->setEditedState (pedited->gradient.centerX ? Edited : UnEdited);
 		centerY->setEditedState (pedited->gradient.centerY ? Edited : UnEdited);
-		enabled->set_inconsistent (multiImage && !pedited->gradient.enabled);
+		set_inconsistent (multiImage && !pedited->gradient.enabled);
 	}
 
-	enaConn.block (true);
-	enabled->set_active (pp->gradient.enabled);
-	enaConn.block (false);
+	setEnabled(pp->gradient.enabled);
 	degree->setValue (pp->gradient.degree);
 	feather->setValue (pp->gradient.feather);
 	strength->setValue (pp->gradient.strength);
 	centerX->setValue (pp->gradient.centerX);
 	centerY->setValue (pp->gradient.centerY);
-
-	lastEnabled = pp->gradient.enabled;
 
 	updateGeometry (pp->gradient.centerX, pp->gradient.centerY, pp->gradient.feather, pp->gradient.degree);
 
@@ -195,7 +186,7 @@ void Gradient::write (ProcParams* pp, ParamsEdited* pedited)
 	pp->gradient.strength = strength->getValue ();
 	pp->gradient.centerX = centerX->getIntValue ();
 	pp->gradient.centerY = centerY->getIntValue ();
-	pp->gradient.enabled = enabled->get_active();
+	pp->gradient.enabled = getEnabled();
 
 	if (pedited) {
 		pedited->gradient.degree = degree->getEditedState ();
@@ -203,7 +194,7 @@ void Gradient::write (ProcParams* pp, ParamsEdited* pedited)
 		pedited->gradient.strength = strength->getEditedState ();
 		pedited->gradient.centerX = centerX->getEditedState ();
 		pedited->gradient.centerY = centerY->getEditedState ();
-		pedited->gradient.enabled = !enabled->get_inconsistent();
+		pedited->gradient.enabled = !get_inconsistent();
 	}
 }
 
@@ -234,7 +225,7 @@ void Gradient::adjusterChanged (Adjuster* a, double newval) {
 
 	updateGeometry (int(centerX->getValue()), int(centerY->getValue()), feather->getValue(), degree->getValue());
 
-	if (listener && enabled->get_active()) {
+	if (listener && getEnabled()) {
 
 		if (a == degree)
 			listener->panelChanged (EvGradientDegree, degree->getTextValue());
@@ -249,20 +240,10 @@ void Gradient::adjusterChanged (Adjuster* a, double newval) {
 
 void Gradient::enabledChanged () {
 
-	if (batchMode) {
-		if (enabled->get_inconsistent()) {
-			enabled->set_inconsistent (false);
-			enaConn.block (true);
-			enabled->set_active (false);
-			enaConn.block (false);
-		}
-	else if (lastEnabled)
-		enabled->set_inconsistent (true);
-
-		lastEnabled = enabled->get_active ();
-	}
 	if (listener) {
-		if (enabled->get_active())
+		if (get_inconsistent())
+			listener->panelChanged (EvGradientEnabled, M("GENERAL_UNCHANGED"));
+		else if (getEnabled())
 			listener->panelChanged (EvGradientEnabled, M("GENERAL_ENABLED"));
 		else
 			listener->panelChanged (EvGradientEnabled, M("GENERAL_DISABLED"));
@@ -289,7 +270,8 @@ void Gradient::trimValues (rtengine::procparams::ProcParams* pp)
 
 void Gradient::setBatchMode (bool batchMode)
 {
-	removeIfThere(enaBox, edit, false);
+	editConn.disconnect();
+	removeIfThere(this, editHBox, false);
 	ToolPanel::setBatchMode (batchMode);
 	degree->showEditedCB ();
 	feather->showEditedCB ();

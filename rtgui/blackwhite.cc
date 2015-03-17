@@ -28,23 +28,12 @@ using namespace rtengine;
 using namespace rtengine::procparams;
 
 
-BlackWhite::BlackWhite (): FoldableToolPanel(this) {
+BlackWhite::BlackWhite (): FoldableToolPanel(this, "blackwhite", M("TP_BWMIX_LABEL"), false, true) {
 	CurveListener::setMulti(true);
 
 	nextredbw = 0.3333;
 	nextgreenbw = 0.3333;
 	nextbluebw = 0.3333;
-
-	//----------- Enables checkbox ------------------------------
-
-	enabled = Gtk::manage (new Gtk::CheckButton (M("GENERAL_ENABLED")));
-	enabled->set_active (false);
-	
-	pack_start(*enabled, Gtk::PACK_SHRINK, 0);
-	enabled->show ();
-	enaconn = enabled->signal_toggled().connect( sigc::mem_fun(*this, &BlackWhite::enabled_toggled) );
-
-	pack_start (*Gtk::manage (new  Gtk::HSeparator()));
 
 	//----------- Method combobox ------------------------------
 
@@ -375,6 +364,10 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this) {
 //	tcmodeconn2 = afterCurveMode->signal_changed().connect( sigc::mem_fun(*this, &BlackWhite::curveMode1Changed2), true );
 
 	show_all();
+
+	disableListener();
+	methodChanged();
+	enableListener();
 }
 BlackWhite::~BlackWhite () {
 	delete luminanceCEG;
@@ -416,7 +409,6 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited) {
 	filterconn.block(true);
 	settingconn.block(true);
 	enaccconn.block (true);
-	enaconn.block (true);
 
 	if (pedited && !pedited->blackwhite.setting)
 		setting->set_active (15); // "Unchanged"
@@ -488,8 +480,7 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited) {
 
 	enabledcc->set_active (pp->blackwhite.enabledcc);
 	lastEnabledcc = pp->blackwhite.enabledcc;
-	enabled->set_active (pp->blackwhite.enabled);
-	lastEnabled = pp->blackwhite.enabled;
+	setEnabled (pp->blackwhite.enabled);
 
 	mixerRed->setValue (pp->blackwhite.mixerRed);
 	mixerGreen->setValue (pp->blackwhite.mixerGreen);
@@ -527,7 +518,7 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited) {
 		beforeCurve->setUnChanged (!pedited->blackwhite.beforeCurve);
 		afterCurve->setUnChanged (!pedited->blackwhite.afterCurve);
 		autoch->set_inconsistent (!pedited->blackwhite.autoc);
-		enabled->set_inconsistent  (!pedited->blackwhite.enabled);
+		set_inconsistent (multiImage && !pedited->blackwhite.enabled);
 		enabledcc->set_inconsistent  (!pedited->blackwhite.enabledcc);
 		mixerRed->setEditedState (pedited->blackwhite.mixerRed ? Edited : UnEdited);
 		mixerGreen->setEditedState (pedited->blackwhite.mixerGreen ? Edited : UnEdited);
@@ -551,7 +542,6 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited) {
 	filterconn.block(false);
 	settingconn.block(false);
 	//autoconn.block (false);
-	enaconn.block (false);
 	enaccconn.block (false);
 
 	updateRGBLabel();
@@ -560,7 +550,7 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited) {
 }
 
 void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited) {
-	pp->blackwhite.enabled = enabled->get_active ();
+	pp->blackwhite.enabled = getEnabled();
 	pp->blackwhite.luminanceCurve = luminanceCurve->getCurve ();
 	pp->blackwhite.autoc = autoch->get_active();
 	pp->blackwhite.enabledcc = enabledcc->get_active ();
@@ -589,7 +579,7 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited) {
 	//  else if (tcMode == 1) pp->blackwhite.afterCurveMode = BlackWhiteParams::TC_MODE_WEIGHTEDSTD;
 	
 	if (pedited) {
-		pedited->blackwhite.enabled = !enabled->get_inconsistent();
+		pedited->blackwhite.enabled = !get_inconsistent();
 		pedited->blackwhite.luminanceCurve = !luminanceCurve->isUnChanged ();
 		pedited->blackwhite.autoc = !autoch->get_inconsistent();
 		pedited->blackwhite.enabledcc = !enabledcc->get_inconsistent();
@@ -631,7 +621,7 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited) {
 }
 
 void BlackWhite::algoChanged () {
-	if (listener && (multiImage||enabled->get_active()) ) {
+	if (listener && (multiImage||getEnabled()) ) {
 		listener->panelChanged (EvBWMethodalg, algo->get_active_text ());}
 }
 
@@ -739,7 +729,7 @@ void BlackWhite::settingChanged () {
 
 	updateRGBLabel();
 
-	if (listener && (multiImage||enabled->get_active())) {
+	if (listener && (multiImage||getEnabled())) {
 		listener->panelChanged (EvBWsetting, setting->get_active_text ());
 	}
 }
@@ -758,7 +748,7 @@ void BlackWhite::filterChanged () {
 
 	updateRGBLabel();
 
-	if (listener && (multiImage||enabled->get_active())) {	
+	if (listener && (multiImage||getEnabled())) {
 		listener->panelChanged (EvBWfilter, filter->get_active_text ());
 	}
 }
@@ -801,35 +791,19 @@ void BlackWhite::methodChanged () {
 		beforeCurveCEG->show();
 		afterCurveCEG->show();
 	}
-	if (listener && (multiImage||enabled->get_active())) {
+	if (listener && (multiImage||getEnabled())) {
 		listener->panelChanged (EvBWmethod, method->get_active_text ());
 	}
 }
 
-void BlackWhite::enabled_toggled () {
-
-	if (multiImage) {
-		if (enabled->get_inconsistent()) {
-			enabled->set_inconsistent (false);
-			enaconn.block (true);
-			enabled->set_active (false);
-			enaconn.block (false);
-		}
-		else if (lastEnabled)
-			enabled->set_inconsistent (true);
-
-		lastEnabled = enabled->get_active ();
-	}
-
+void BlackWhite::enabledChanged () {
 	if (listener) {
-		if (enabled->get_inconsistent())
+		if (get_inconsistent())
 			listener->panelChanged (EvBWChmixEnabled, M("GENERAL_UNCHANGED"));
-		else if (enabled->get_active ()) { 
+		else if (getEnabled())
 			listener->panelChanged (EvBWChmixEnabled, M("GENERAL_ENABLED"));
-		}
-		else {
+		else
 			listener->panelChanged (EvBWChmixEnabled, M("GENERAL_DISABLED"));
-		}
 	}
 }
 
@@ -1046,7 +1020,7 @@ void BlackWhite::adjusterChanged (Adjuster* a, double newval) {
 
 		updateRGBLabel();
 
-	if (listener  && (multiImage||enabled->get_active())) {
+	if (listener  && (multiImage||getEnabled())) {
 		Glib::ustring value = a->getTextValue();
 		if (a == mixerRed)
 			listener->panelChanged (EvBWred, value );
@@ -1103,7 +1077,7 @@ void BlackWhite::updateRGBLabel () {
 				Glib::ustring::format(std::fixed, std::setprecision(1), r*100.),
 				Glib::ustring::format(std::fixed, std::setprecision(1), g*100.),
 				Glib::ustring::format(std::fixed, std::setprecision(1), b*100.),
-				Glib::ustring::format(std::fixed, std::setprecision(0), ceil(kcorrec*100./*(r+g+b)*100.)*/)))			
+				Glib::ustring::format(std::fixed, std::setprecision(0), ceil(kcorrec*100./*(r+g+b)*100.)*/)))
 				);
 		// We have to update the RGB sliders too if preset values has been chosen
 		if (sSetting != "RGB-Abs" && sSetting != "RGB-Rel" && sSetting != "ROYGCBPM-Abs" && sSetting != "ROYGCBPM-Rel") {
@@ -1142,8 +1116,10 @@ void BlackWhite::setBatchMode (bool batchMode) {
 	setting->append_text (M("GENERAL_UNCHANGED"));
 	luminanceCEG->setBatchMode (batchMode);
 	beforeCurveCEG->setBatchMode (batchMode);
+	beforeCurveCEG->show();
 	beforeCurveMode->append_text (M("GENERAL_UNCHANGED"));
 	afterCurveCEG->setBatchMode (batchMode);
+	afterCurveCEG->show();
 //	afterCurveMode->append_text (M("GENERAL_UNCHANGED"));
 	algo->append_text (M("GENERAL_UNCHANGED"));
 
